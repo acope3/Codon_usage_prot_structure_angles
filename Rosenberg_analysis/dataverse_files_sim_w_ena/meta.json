@@ -1,0 +1,32 @@
+{
+  "id": "20211001_124553-aida-ex_EC-src_EC",
+  "hostname": "aida",
+  "out_tag": "ex_EC-src_EC",
+  "async_timeout": 240,
+  "create_zip": false,
+  "out_dir": "out/prec-collected/20211001_124553-aida-ex_EC-src_EC",
+  "resolution": 1.8,
+  "r_free": 0.24,
+  "expr_sys": "Escherichia Coli",
+  "source_taxid": 562,
+  "seq_similarity_thresh": 0.7,
+  "query": "(('X-Ray Resolution'  LESS_OR_EQUAL '1.8') AND ('Method'  EXACT_MATCH 'X-RAY DIFFRACTION')) AND ('R_Free'  LESS_OR_EQUAL '0.24') AND ('Expression System'  CONTAINS_PHRASE 'Escherichia Coli') AND ('Source Organism Taxonomy ID'  EXACT_MATCH '562')",
+  "prec_init_args": {},
+  "prec_out_dir": "out/prec",
+  "write_csv": false,
+  "n_query_results": 1994,
+  "n_collected": 1676,
+  "n_filtered": {
+    "total": "333",
+    "metadata": "28",
+    "redundant_unps": "305"
+  },
+  "n_collected_post_filter": 1343,
+  "dataset_size_mb": "23.89",
+  "n_entries": 357479,
+  "steps": [
+    "Collect ProteinRecords: completed in 00+00:02:08 result=SUCCESS",
+    "Filter Collected: completed in 00+00:00:21 result=SUCCESS",
+    "Write dataset: completed in 00+00:00:08 result=SUCCESS"
+  ]
+}
