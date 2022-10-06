@@ -1,21 +1,26 @@
 ---
 title: "Analysis of CUB and Dihedral Angle Bonds"
-author: "Opuntende J. Akeju and Alexander L. Cope"
+author: "Opetunde J. Akeju and Alexander L. Cope"
 date: "6/24/2022"
 output: html_document
 ---
 
 ```{r setup, include=FALSE}
+library(AnaCoDa,lib.loc="~/AnaCoDa_installs/develop/")
 library(tidyverse)
 library(Biostrings)
 library(ggpubr)
-
+library(cowplot)
 getSeqIDs <- function(fasta.file)
 {
   fasta <- Biostrings::readDNAStringSet(fasta.file)
   return(names(fasta))
 }
 ```
+
+# Sanity check model fit
+
+ROC-SEMPPR assumes that the biggest driver of variation in codon usage between genes is gene expression, which is well-known to be the best correlate with gene-specific codon usage bias. ROC-SEMPPR estimates of gene expression ($\phi$) should be at least moderately correlated with empirical data. After reanalzying ribo-seq datasets L29 and L33 from Mohammad et al. eLife 2019 with riboviz 2 (Cope et al. Bioinformatics 2022), we compared the average TPM values to the ROC-SEMPPR estimates. 
 
 ```{r}
 roc.phi <- read_csv("ROC_analysis/Ecoli_refseq_ena_K_1/run_2/Parameter_est/gene_expression.txt")
@@ -45,9 +50,9 @@ emp.vs.roc
 ```
 
 
+## Compare the real and simulated protein coding sequences.
 
-## Including Plots
-
+Compare the counts of each codon observed in each protein-coding sequence. Each dot represents the number of occurrences of a specific codon in a specific gene.
 
 ```{r}
 real.genome <- initializeGenomeObject("Ecoli/Ecoli_refseq_and_ena.fasta")
@@ -79,8 +84,9 @@ compare.counts
 ```
 
 
+# Format simulated protein-coding sequences
 
-
+This will create the necessary file for analyzing the simulated protein-coding sequences using the Rosenberg et al. analysis pipeline downloaded from Zenodo.
 
 ```{r}
 genome <- readDNAStringSet("Ecoli/simulatedEcoli_w_ena.fasta")
@@ -104,7 +110,7 @@ genome.df.ena <- una.ena %>%
   left_join(genome.df,by="Locus") %>%
   dplyr::select(pdb_id,unp_id,Position,Codon)
 
-write_csv(genome.df.ena,"/data2/cope/Codon_usage_prot_structure_angles/Ecoli/simulatedEcoli_w_ena.csv")
+#write_csv(genome.df.ena,"/data2/cope/Codon_usage_prot_structure_angles/Ecoli/simulatedEcoli_w_ena.csv")
 
 
 ```
@@ -151,6 +157,10 @@ sim.data <- sim.data.offset.unp %>%
 #write.csv(sim.data,"Rosenberg_analysis/dataverse_files_sim_w_ena/data-precs.csv")
 ```
 
+# Check randomization of codon usage by position
+
+Notably, ROC-SEMPPR does not consider position when analyzing codon usage data. Thus, simulated data should mostly eliminate signals that reflect position-specific selective pressures on codon usage. 
+
 ```{r fig.width=9,fig.height=7}
 percentage.agree <- sim.data.offset.unp %>% 
   group_by(name) %>% 
@@ -185,6 +195,10 @@ randomization <- ggplot(percentage.agree,aes(x=name,y=Agree.Percent)) +
 randomization
 ```
 
+# Compare the results of Rosenberg et al. analysis
+
+If there is a true correlation between codon usage and protein dihedral bond angles, the simulated data should show little of this signal compared to the real data.
+However, strong agreement between the real and simulated data could indicate their method is picking up on signals related to selection for translation efficiency. 
 
 ```{r}
 
