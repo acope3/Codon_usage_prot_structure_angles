@@ -38,6 +38,6 @@ vignettes/*.pdf
 # R Environment Variables
 .Renviron
 
-*/.DS.STORE
+*/.DS_Store
 */parameter.Rda
 */mcmc.Rda
