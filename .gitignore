@@ -39,5 +39,6 @@ vignettes/*.pdf
 .Renviron
 
 */.DS_Store
-*/parameter.Rda
-*/mcmc.Rda
+*/*.Rout
+parameter.Rda
+mcmc.Rda
