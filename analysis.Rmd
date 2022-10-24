@@ -1,8 +1,10 @@
 ---
-title: "Analysis of CUB and Dihedral Angle Bonds"
+title: "Re-examining the correlations between codon usage and dihedral bond angles using a population genetics model"
 author: "Opetunde J. Akeju and Alexander L. Cope"
 date: "6/24/2022"
-output: html_document
+output:
+  pdf_document: default
+  html_document: default
 ---
 
 ```{r setup, include=FALSE}
@@ -18,13 +20,21 @@ getSeqIDs <- function(fasta.file)
 }
 ```
 
+# Introduction
+
+Codon usage bias (CUB), or the non-uniform usage of synonymous codons, has been observed across all domains of life. CUB is driven by a combination of both non-adaptive (e.g. mutation biases) and adaptive (e.g. natural selection for translation efficiency/accuracy) evolutionary forces. Empirical work has shown that changes to synonymous codon usage can affect co-translational protein folding and various computational studies have sought to determine if there is a general connection between codon usage and protein structure. In a recent manuscript, Rosenberg et al. Nat Comm. 2022 explored the relationship between synonymous codon usage and the dihedral bond angles that form a protein's backbone. Using a method they developed to compare dihedral bond angle distributions across synonymous codons, they detected statistically significant differences between the dihedral bond angle distributions of synonymous codons within the *E. coli* proteome. Although they rightly note that correlation does not imply causation, they hypothesize that differences in dihedral bond angle distributions between synonymous codons could be due to differences in elongation speed (see Figure 5 in Rosenberg et al.). Here, we present results using simulated data suggesting the findings of Rosenberg et al. may be a statistical artifact due to failure to control for a significant factor shaping a gene's synonymous CUB: gene expression. 
+
+# Data and model fitting
+
+The E. coli K12 MG1655 was downloaded from NCBI-RefSeq (GCF 000005845.2). Rosenberg et al. 2022 did not restrict their analysis to a single strain of E. coli. Non-K12 MG1655 protein-coding sequences used by Rosenberg et al. were downloaded from the European Nucleotide Archive and appended to the E. coli K12 MG1655 protein- coding sequence FASTA file. We note that one protein-coding sequence (ENA AAL21040.1) used by Rosenberg et al. was annotated in the ENA as a *S. enterica* gene, but this was included for completeness. Excluding positions with missing codons in the real data, the simulated data contained 99% of the amino acid sites included in the real data. ROC-SEMPPR was fit to these protein-coding sequences using the AnaCoDa R package to estimate parameters reflecting natural selection on codon usage, mutation bias, and an evolutionary average estimate gene expression.
+
 # Sanity check model fit
 
-ROC-SEMPPR assumes that the biggest driver of variation in codon usage between genes is gene expression, which is well-known to be the best correlate with gene-specific codon usage bias. ROC-SEMPPR estimates of gene expression ($\phi$) should be at least moderately correlated with empirical data. After reanalzying ribo-seq datasets L29 and L33 from Mohammad et al. eLife 2019 with riboviz 2 (Cope et al. Bioinformatics 2022), we compared the average TPM values to the ROC-SEMPPR estimates. 
+ROC-SEMPPR assumes that the biggest driver of variation in codon usage between genes is gene expression, which is well-known to be the best correlate with gene-specific codon usage bias. ROC-SEMPPR estimates of gene expression ($\phi$) should be at least moderately correlated with empirical data. After reanalzying ribo-seq datasets L29 and L33 from Mohammad et al. eLife 2019 with riboviz 2, we compared the average TPM values to the ROC-SEMPPR estimates. The moderate correlation indicates ROC-SEMPPR is an adequate model for quantifying codon usage in *E. coli*.  
 
 ```{r}
-roc.phi <- read_csv("ROC_analysis/Ecoli_refseq_ena_K_1/run_2/Parameter_est/gene_expression.txt")
-ribo.seq <- read_csv("Ecoli/ecoli_riboseq.csv")
+roc.phi <- read_csv("ROC_analysis/Ecoli_refseq_ena_K_1/run_2/Parameter_est/gene_expression.txt",col_types = cols())
+ribo.seq <- read_csv("Ecoli/ecoli_riboseq.csv",col_types = cols())
 seq.ids <- getSeqIDs("Ecoli/Ecoli_refseq_and_ena.fasta")
 
 ## This works because the gene order in gene_expression.txt is in the the same order as the FASTA
@@ -52,7 +62,7 @@ emp.vs.roc
 
 ## Compare the real and simulated protein coding sequences.
 
-Compare the counts of each codon observed in each protein-coding sequence. Each dot represents the number of occurrences of a specific codon in a specific gene.
+Compare the counts of each codon observed in each protein-coding sequence. Each dot represents the number of occurrences of a specific codon in a specific gene. As can be seen, the codon usage of our simulated genes generally reflects the codon usage of real genes. 
 
 ```{r}
 real.genome <- initializeGenomeObject("Ecoli/Ecoli_refseq_and_ena.fasta")
@@ -68,7 +78,8 @@ sim.counts.long <- as.data.frame(sim.counts) %>%
   rownames_to_column("Locus") %>% 
   pivot_longer(-Locus,names_to="Codon",values_to="Counts")
 
-counts.long <- real.counts.long %>% left_join(sim.counts.long,by=c("Locus","Codon"),suffix=c("_Real","_Sim"))
+counts.long <- real.counts.long %>% 
+  left_join(sim.counts.long,by=c("Locus","Codon"),suffix=c("_Real","_Sim"))
 
 compare.counts <- ggplot(counts.long,aes(x=Counts_Real,y=Counts_Sim)) +
   geom_point() +
@@ -86,7 +97,7 @@ compare.counts
 
 # Format simulated protein-coding sequences
 
-This will create the necessary file for analyzing the simulated protein-coding sequences using the Rosenberg et al. analysis pipeline downloaded from Zenodo.
+This will create the necessary file for analyzing the simulated protein-coding sequences using the Rosenberg et al. analysis pipeline downloaded from Zenodo. The real data was downloaded from the site listed under Data Availability in Rosenberg et al.
 
 ```{r}
 genome <- readDNAStringSet("Ecoli/simulatedEcoli_w_ena.fasta")
@@ -97,11 +108,11 @@ genome.df <- lapply(genome,function(x)
     codon.df <- data.frame(Position=1:length(codon.seq),Codon=codon.seq)
 }) %>% bind_rows(.id="Locus")
 
-id.map <- read_tsv("/data2/cope/Codon_usage_prot_structure_angles/ecoli_id_map.tsv") %>% 
+id.map <- read_tsv("/data2/cope/Codon_usage_prot_structure_angles/ecoli_id_map.tsv",col_types = cols()) %>% 
   dplyr::select(Locus,uniprot_id) %>%
   dplyr::rename(unp_id=uniprot_id)
 
-una.ena <- read_csv("/data2/cope/Codon_usage_prot_structure_angles/Rosenberg_analysis/dataverse_files/meta-structs_filtered.csv") %>% 
+una.ena <- read_csv("/data2/cope/Codon_usage_prot_structure_angles/Rosenberg_analysis/dataverse_files/meta-structs_filtered.csv",col_types = cols()) %>% 
   dplyr::select(ena_id,unp_id,pdb_id) %>%
   dplyr::rename(Locus=ena_id) %>%
   distinct(Locus, unp_id, pdb_id, .keep_all = TRUE)
@@ -118,7 +129,7 @@ genome.df.ena <- una.ena %>%
 
 
 ```{r}
-ecoli.df <- read_csv("/data2/cope/Codon_usage_prot_structure_angles/Ecoli/simulatedEcoli_w_ena.csv") %>%
+ecoli.df <- read_csv("/data2/cope/Codon_usage_prot_structure_angles/Ecoli/simulatedEcoli_w_ena.csv",col_types = cols()) %>%
   dplyr::rename(res_id=Position) %>%
   filter(Codon %in% AnaCoDa::codons()) %>% 
   mutate(res_id_offset = case_when(
@@ -131,11 +142,15 @@ ecoli.df <- read_csv("/data2/cope/Codon_usage_prot_structure_angles/Ecoli/simula
   mutate(name = ifelse(name == "Z","S",name)) %>%
   filter(!Codon %in% c("TAA","TGA","TAG"))
 
-real.data <- read_csv("/data2/cope/Codon_usage_prot_structure_angles/Rosenberg_analysis/dataverse_files/data-precs.csv")
+real.data <- read_csv("/data2/cope/Codon_usage_prot_structure_angles/Rosenberg_analysis/dataverse_files/data-precs.csv",col_types = cols())
 
-real.data <- real.data %>% filter(!unp_id %in% c("P09883","A0A1B3B7F6","O82882")) # AnaCoDa software ignored these genes due to various quality control issues (e.g. length not divisible by 3)
+real.data <- real.data %>% 
+  filter(!unp_id %in% c("P09883","A0A1B3B7F6","O82882")) 
+## AnaCoDa software ignored these genes due to 
+## various quality control issues (e.g. length not divisible by 3)
 
-sim.data.offset.unp <- real.data %>% inner_join(ecoli.df,by=c("pdb_id","unp_id","unp_idx" = "res_id_offset","name")) %>% 
+sim.data.offset.unp <- real.data %>% 
+  inner_join(ecoli.df,by=c("pdb_id","unp_id","unp_idx" = "res_id_offset","name")) %>% 
   dplyr::select(-res_id.y) %>%
   dplyr::rename(res_id=res_id.x)
 
@@ -159,7 +174,7 @@ sim.data <- sim.data.offset.unp %>%
 
 # Check randomization of codon usage by position
 
-Notably, ROC-SEMPPR does not consider position when analyzing codon usage data. Thus, simulated data should mostly eliminate signals that reflect position-specific selective pressures on codon usage. 
+Notably, ROC-SEMPPR does not consider position when analyzing codon usage data. Thus, simulated data should mostly eliminate signals that reflect position-specific selective pressures on codon usage. As can be seen in the figure below, the position of synonymous codons across the simulated data are effectively randomized compared to the real data, with the horizontal line representing perfect randomization of the positions of synonymous codons. There does appear to be a bias upwards for most amino acids, but this is likely due to the fact that some genes are heavily biased towards certain codons.
 
 ```{r fig.width=9,fig.height=7}
 percentage.agree <- sim.data.offset.unp %>% 
@@ -197,15 +212,15 @@ randomization
 
 # Compare the results of Rosenberg et al. analysis
 
-If there is a true correlation between codon usage and protein dihedral bond angles, the simulated data should show little of this signal compared to the real data.
-However, strong agreement between the real and simulated data could indicate their method is picking up on signals related to selection for translation efficiency. 
+If there is a true correlation between codon usage and protein dihedral bond angles, the simulated data should show little of this signal compared to the real data. However, strong agreement between the real and simulated data could indicate the method of Rosenberg et al. is detecting signals related to selection for translation efficiency, as highly expressed genes are expected to be biased towards faster synonymous codons compared to low expression genes. As can be seen below, we see high correlation between the results of the analysis of real and simulated data. Overall, ~90% of the synonymous codon pairs found to have statistically significant differences in the dihedral bond angle distributions in the real data were also found to be statistically significant in the simulated data. As shown by the boxplots, even in cases where the a synonymous codon pair was found to be statistically significant in only one of the datasets, the same pair in the other dataset tended to have a smaller p-value.
 
-```{r}
+```{r warning = F}
 
-real <- read_csv("/data2/cope/Codon_usage_prot_structure_angles/Rosenberg_analysis/dataverse_files/results/pointwise_cdist-natcom/pvals/cc-pvals.csv")
-sim <- read_csv("/data2/cope/Codon_usage_prot_structure_angles/Rosenberg_analysis/dataverse_files_sim_w_ena/results/pointwise_cdist-simulated/pvals/cc-pvals.csv")
+real <- read_csv("/data2/cope/Codon_usage_prot_structure_angles/Rosenberg_analysis/dataverse_files/results/pointwise_cdist-natcom/pvals/cc-pvals.csv",col_types = cols())
+sim <- read_csv("/data2/cope/Codon_usage_prot_structure_angles/Rosenberg_analysis/dataverse_files_sim_w_ena/results/pointwise_cdist-simulated/pvals/cc-pvals.csv",col_types = cols())
 
-combined <- real %>% left_join(sim,by=c("condition_group","subgroup1","subgroup2"),suffix=c("_Real","_Sim"))
+combined <- real %>% 
+  left_join(sim,by=c("condition_group","subgroup1","subgroup2"),suffix=c("_Real","_Sim"))
 
 cor.test(unlist(combined$pval_Real),unlist(combined$pval_Sim),method="spearman")
 cor.test(unlist(combined$ddist_Real),unlist(combined$ddist_Sim),method="spearman")
@@ -218,6 +233,9 @@ all.real <- combined %>% filter(significant_Real == T)
 only.real <- combined %>% filter(significant_Real == T & significant_Sim == F)
 only.sim <- combined %>% filter(significant_Real == F & significant_Sim == T)
 both <- combined %>% filter(significant_Real == T & significant_Sim == T)
+
+print("Percentage of statistically significant cases")
+print("in simulated data also found in the real data:")
 print(nrow(both)/nrow(all.real))
 
 combined <- combined %>% mutate(Category = case_when(
@@ -269,7 +287,9 @@ sig.comp <- ggplot(combined.long,aes(x=Category,y=pval,fill=set)) +
 
 
 ```
+# Generate final figure for publication
 
+Below is the final figure to be include in the Matters Arising manuscript. 
 
 ```{r fig.width=12,fig.height=12}
 library(patchwork)
