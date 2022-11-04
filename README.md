@@ -3,6 +3,8 @@ A recent article in Nature Communications by [Rosenberg *et al.*](https://doi.or
 
 A reanalysis of the results from Rosenberg et al. Nat. Comm. 2022 using simulated data. Figures in Matters Arising can be re-created using the `analysis.Rmd` file. `analysis.pdf` is a compiled version briefly describing our methods and results.
 
+A preprint of the article currently submitted to Nat. Comm. as a Matters Arising can be found [here](https://doi.org/10.1101/2022.10.26.513858).
+
 # Installing AnaCoDa
 
 We recommend installing `AnaCoDa` from https://github.com/acope3/RibModelFramework/tree/develop. The develop branch is currently more up-to-data. `AnaCoDa` can be installed locally using the commands:
