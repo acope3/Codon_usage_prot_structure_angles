@@ -33,9 +33,9 @@ The E. coli K12 MG1655 was downloaded from NCBI-RefSeq (GCF 000005845.2). Rosenb
 ROC-SEMPPR assumes that the biggest driver of variation in codon usage between genes is gene expression, which is well-known to be the best correlate with gene-specific codon usage bias. ROC-SEMPPR estimates of gene expression ($\phi$) should be at least moderately correlated with empirical data. After reanalzying ribo-seq datasets L29 and L33 from Mohammad et al. eLife 2019 with riboviz 2, we compared the average TPM values to the ROC-SEMPPR estimates. The moderate correlation indicates ROC-SEMPPR is an adequate model for quantifying codon usage in *E. coli*.  
 
 ```{r}
-roc.phi <- read_csv("ROC_analysis/Ecoli_refseq_ena_K_1/run_2/Parameter_est/gene_expression.txt",col_types = cols())
+roc.phi <- read_csv("ROC_analysis/Ecoli_refseq_no_yp_ena_K_2/run_2/Parameter_est/gene_expression.txt",col_types = cols())
 ribo.seq <- read_csv("Ecoli/ecoli_riboseq.csv",col_types = cols())
-seq.ids <- getSeqIDs("Ecoli/Ecoli_refseq_and_ena.fasta")
+seq.ids <- getSeqIDs("Ecoli/Ecoli_refseq_no_yp_pseudo_and_ena.fasta")
 
 ## This works because the gene order in gene_expression.txt is in the the same order as the FASTA
 roc.phi <- roc.phi %>% mutate(Locus = seq.ids)
@@ -65,9 +65,9 @@ emp.vs.roc
 Compare the counts of each codon observed in each protein-coding sequence. Each dot represents the number of occurrences of a specific codon in a specific gene. As can be seen, the codon usage of our simulated genes generally reflects the codon usage of real genes. 
 
 ```{r}
-real.genome <- initializeGenomeObject("Ecoli/Ecoli_refseq_and_ena.fasta")
+real.genome <- initializeGenomeObject("Ecoli/Ecoli_refseq_no_yp_pseudo_and_ena.fasta")
 real.counts <- getCodonCounts(real.genome)
-sim.genome <- initializeGenomeObject("Ecoli/simulatedEcoli_w_ena.fasta")
+sim.genome <- initializeGenomeObject("Ecoli/simulatedEcoli_w_ena_k_2.fasta")
 sim.counts <- getCodonCounts(sim.genome)
 
 real.counts.long <- as.data.frame(real.counts) %>% 
@@ -100,7 +100,7 @@ compare.counts
 This will create the necessary file for analyzing the simulated protein-coding sequences using the Rosenberg et al. analysis pipeline downloaded from Zenodo. The real data was downloaded from the site listed under Data Availability in Rosenberg et al.
 
 ```{r}
-genome <- readDNAStringSet("Ecoli/simulatedEcoli_w_ena.fasta")
+genome <- readDNAStringSet("Ecoli/simulatedEcoli_w_ena_k_2.fasta")
 genome.df <- lapply(genome,function(x)
   {
     sst <- strsplit(as.character(x), "")[[1]]
@@ -121,7 +121,7 @@ genome.df.ena <- una.ena %>%
   left_join(genome.df,by="Locus") %>%
   dplyr::select(pdb_id,unp_id,Position,Codon)
 
-#write_csv(genome.df.ena,"/data2/cope/Codon_usage_prot_structure_angles/Ecoli/simulatedEcoli_w_ena.csv")
+write_csv(genome.df.ena,"/data2/cope/Codon_usage_prot_structure_angles/Ecoli/simulatedEcoli_w_ena_k_2.csv")
 
 
 ```
@@ -169,8 +169,9 @@ sim.data <- sim.data.offset.unp %>%
   dplyr::select(-Codon)
 
 
-#write.csv(sim.data,"Rosenberg_analysis/dataverse_files_sim_w_ena/data-precs.csv")
+#write.csv(sim.data,"/data2/cope/proteins-1.0.0-natcom//dataverse_files_sim_w_ena_k2/data-precs.csv")
 ```
+
 
 # Check randomization of codon usage by position
 
@@ -178,7 +179,14 @@ Notably, ROC-SEMPPR does not consider position when analyzing codon usage data. 
 
 ```{r fig.width=9,fig.height=7}
 percentage.agree <- sim.data.offset.unp %>% 
-  group_by(name) %>% 
+  filter(codon_score == 1) %>%
+  filter(secondary != "-") %>%
+  mutate(secondary = case_when(
+    secondary %in% c("T","S","B","G","I") ~ "Other",
+    TRUE ~ secondary
+  )) %>%
+  #filter(secondary %in% c("H","E")) %>%
+  group_by(name,secondary) %>%
   mutate(Agree = ifelse(codon == Codon,1,0)) %>% 
   summarize(Total = n(), Total.Agree = sum(Agree),Agree.Percent=Total.Agree/Total)
 
@@ -197,18 +205,54 @@ percentage.agree <- percentage.agree %>%
          
          )
 
-randomization <- ggplot(percentage.agree,aes(x=name,y=Agree.Percent)) + 
-  geom_point() +
+# 95% CI based on normal approximation
+percentage.agree <- percentage.agree %>%
+  group_by(name,secondary) %>%
+  mutate(Lower.CI = Agree.Percent - 1.96 * sqrt((Agree.Percent * (1-Agree.Percent))/Total),
+         Upper.CI = Agree.Percent + 1.96 * sqrt((Agree.Percent * (1-Agree.Percent))/Total)
+  )
+
+randomization <- ggplot(percentage.agree,aes(x=name,y=Agree.Percent,color=secondary)) + 
+  geom_point(size=1) +
+  geom_errorbar(aes(ymin=Lower.CI,ymax=Upper.CI),width=0) +
   geom_hline(aes(yintercept = Uniform.Expectation),linetype="dashed") + 
   xlab("Amino Acid") +
-  ylab("Percentage of sites with same codon\nbetween datasets") +
+  ylab("Percentage of sites with same codon\nbetween real and simulated CDS") +
   ylim(c(0,1)) +
   theme_cowplot() +
  #guides(color=guide_legend(title="Number of Codons")) +
   facet_wrap(~Codon.Class,scales="free_x")+ 
-  ggtitle("Randomization of\ncodons by position")
+  ggtitle("Randomization of\ncodons by position") 
 randomization
 ```
+
+
+```{r warning = F}
+real.data <- read_csv("/data2/cope/Codon_usage_prot_structure_angles/Rosenberg_analysis/dataverse_files/data-precs.csv",col_types = cols()) %>%
+  filter(codon_score == 1 & codon != "---" & secondary != "-") 
+
+aa.used <- real.data %>%
+  filter(str_detect(codon,"[AGCT]{3}")) %>%
+  distinct(unp_id,unp_idx,.keep_all = T) %>%
+  dplyr::select(unp_id,unp_idx,name) %>%
+  rowwise() %>%
+  mutate(new.codon = case_when(
+    name == "S" ~ dqsample::sample(c(AAToCodon(name),AAToCodon("Z")),1),
+    T ~ dqsample::sample(AAToCodon(name),1)
+    )
+  )
+
+sim.data <- real.data %>% 
+  left_join(aa.used,by=c("unp_id","unp_idx","name")) %>%
+  mutate(codon = ifelse(str_detect(codon,"[AGCT]{3}"),new.codon,codon),
+         codon_opts = ifelse(str_detect(codon,"[AGCT]{3}"),new.codon,codon)) %>%
+  dplyr::select(-new.codon)
+
+write_csv(sim.data,"/data2/cope/proteins-1.0.0-natcom/dataverse_files_sim_w_ena_random/data-precs.csv")
+
+
+```
+
 
 # Compare the results of Rosenberg et al. analysis
 
@@ -218,16 +262,20 @@ If there is a true correlation between codon usage and protein dihedral bond ang
 
 real <- read_csv("/data2/cope/Codon_usage_prot_structure_angles/Rosenberg_analysis/dataverse_files/results/pointwise_cdist-natcom/pvals/cc-pvals.csv",col_types = cols())
 sim <- read_csv("/data2/cope/Codon_usage_prot_structure_angles/Rosenberg_analysis/dataverse_files_sim_w_ena/results/pointwise_cdist-simulated/pvals/cc-pvals.csv",col_types = cols())
+#sim <- read_csv("/data2/cope/proteins-1.0.0-natcom/dataverse_files_sim_w_ena_random//results/pointwise_cdist-simulated-3/pvals/cc-pvals.csv",col_types = cols())
 
 combined <- real %>% 
-  left_join(sim,by=c("condition_group","subgroup1","subgroup2"),suffix=c("_Real","_Sim"))
+  left_join(sim,by=c("condition_group","subgroup1","subgroup2"),suffix=c("_Real","_Sim")) #%>%
+  #filter(condition_group %in% c("HELIX","SHEET"))
 
 cor.test(unlist(combined$pval_Real),unlist(combined$pval_Sim),method="spearman")
 cor.test(unlist(combined$ddist_Real),unlist(combined$ddist_Sim),method="spearman")
-cor.test(unlist(combined$phi1_mean_Real),unlist(combined$phi1_mean_Sim),method="spearman")
-cor.test(unlist(combined$psi1_mean_Real),unlist(combined$psi1_mean_Sim),method="spearman")
-cor.test(unlist(combined$phi2_mean_Real),unlist(combined$phi2_mean_Sim),method="spearman")
-cor.test(unlist(combined$psi2_mean_Real),unlist(combined$psi2_mean_Sim),method="spearman")
+single.occ <- combined %>%
+  distinct(condition_group,subgroup1,.keep_all = T)
+cor.test(unlist(single.occ$phi1_mean_Real),unlist(single.occ$phi1_mean_Sim),method="spearman")
+cor.test(unlist(single.occ$psi1_mean_Real),unlist(single.occ$psi1_mean_Sim),method="spearman")
+cor.test(unlist(single.occ$phi2_mean_Real),unlist(single.occ$phi2_mean_Sim),method="spearman")
+cor.test(unlist(single.occ$psi2_mean_Real),unlist(single.occ$psi2_mean_Sim),method="spearman")
 
 all.real <- combined %>% filter(significant_Real == T)
 only.real <- combined %>% filter(significant_Real == T & significant_Sim == F)
@@ -256,7 +304,16 @@ pval.compare <- ggplot(combined,aes(x=pval_Real,y=pval_Sim)) +
   theme_cowplot() +
   ggtitle("Comparing p-values")
 
-
+test.compare <- ggplot(combined,aes(x=d12_Real,y=d12_Sim)) +
+  geom_point() +
+  xlab("D12\nReal Sequences") +
+  ylab("D12\nSimulated Sequences") +
+  geom_abline(intercept=0,slope=1,linetype="dashed",color="red") +
+  stat_cor(method="spearman",label.sep="\n") +
+  theme_cowplot() +
+  scale_x_log10() +
+  scale_y_log10() +
+  ggtitle("Comparing D12")
 
 test.compare <- ggplot(combined,aes(x=ddist_Real,y=ddist_Sim)) +
   geom_point() +
@@ -287,18 +344,360 @@ sig.comp <- ggplot(combined.long,aes(x=Category,y=pval,fill=set)) +
 
 
 ```
-# Generate final figure for publication
+# Generate figure 1 for publication
 
 Below is the final figure to be include in the Matters Arising manuscript. 
 
-```{r fig.width=12,fig.height=12}
+```{r fig.width=14,fig.height=14}
 library(patchwork)
-
 
 p <- ((emp.vs.roc/compare.counts)|randomization|((pval.compare/test.compare)))/sig.comp + scale_y_log10() + xlab("Significant")
 p <- p + plot_annotation(tag_levels = "A") + plot_layout(height=c(2,1))
 p
 
-ggsave2("fig1.pdf",plot=p,width=12,height = 12)
+#ggsave2("fig1_for_mbe.pdf",plot=p,width=14,height = 14)
 
 ```
+
+
+# Assessing the impact of noise in protein bond angles in real and simulated data
+
+```{r fig.width=5}
+library(ggrepel)
+same.codon.real <- real %>%
+  separate(subgroup1,into = c("AA1","Codon1"),remove = F) %>%
+  separate(subgroup2,into = c("AA2","Codon2"),remove = F) %>%
+  filter(subgroup1 == subgroup2) %>%
+  group_by(condition_group,AA1) %>%
+  summarize(Median.Same = mean(ddist,na.rm=T),
+            Total.AA = sum(n1))
+diff.codon.real <- real %>% 
+  separate(subgroup1,into = c("AA1","Codon1"),remove = F) %>%
+  separate(subgroup2,into = c("AA2","Codon2"),remove = F) %>%
+  filter(subgroup1 != subgroup2) %>% 
+  group_by(condition_group,AA1) %>% 
+  summarize(Median.Diff = mean(ddist,na.rm=T))
+
+
+all.codon <- same.codon.real %>% 
+  left_join(diff.codon.real)
+
+p <- ggplot(all.codon,aes(x=Median.Same,y=Median.Diff,label=AA1)) +
+  geom_point() +
+  geom_text_repel()+
+  xlab("Mean DDist\nCodon vs. Itself, Same Amino Acid") +
+  ylab("Mean DDist\nDifferent Synonyms, Same Amino Acid") +
+  stat_cor(method="spearman",label.sep = "\n") +
+  facet_wrap(~condition_group) +
+  theme_cowplot() +
+  ggtitle("Comparing mean bond angles distances of\ncodons compared to itself vs. synonyms")
+p
+
+ggsave2("fig_3_for_mbe.pdf",plot=p,width=7,height=7)
+
+```
+```{r fig.width=5}
+sim.roc <- read_csv("/data2/cope/proteins-1.0.0-natcom/dataverse_files_sim_w_ena//results/pointwise_cdist-simulated/pvals/cc-pvals.csv",col_types = cols())
+
+same.codon.sim <- sim.roc %>% 
+  separate(subgroup1,into = c("AA1","Codon1"),remove = F) %>%
+  separate(subgroup2,into = c("AA2","Codon2"),remove = F) %>%
+  filter(subgroup1 == subgroup2) %>% 
+  group_by(condition_group,AA1) %>% 
+  summarize(Median.Same = mean(ddist,na.rm=T)) 
+diff.codon.sim <- sim.roc %>% 
+  separate(subgroup1,into = c("AA1","Codon1"),remove = F) %>%
+  separate(subgroup2,into = c("AA2","Codon2"),remove = F) %>%
+  filter(subgroup1 != subgroup2) %>% 
+  group_by(condition_group,AA1) %>% 
+  summarize(Median.Diff = mean(ddist,na.rm=T))
+
+
+all.codon <- same.codon.sim %>% 
+  left_join(diff.codon.sim,by=c("condition_group","AA1"))
+
+p <- ggplot(all.codon,aes(x=Median.Same,y=Median.Diff,label=AA1)) +
+  geom_point() +
+  geom_text_repel()+
+  xlab("Mean DDist\nCodon vs. itself, Same Amino Acid") +
+  ylab("Mean DDist\nDifferent Synonyms, Same Amino Acid") +
+  stat_cor(method="spearman",label.sep = "\n") +
+  facet_wrap(~condition_group) +
+  theme_cowplot() +
+  ggtitle("Comparing mean bond angles distances of\ncodons compared to itself vs. synonyms:\nSimulated protein-coding sequences")
+p
+
+
+```
+
+```{r}
+all.codon <- same.codon.real %>% 
+  left_join(same.codon.sim,by=c("condition_group","AA1"))
+
+
+p <- ggplot(all.codon,aes(x=Median.Same.x,y=Median.Same.y,label=AA1)) +
+  geom_point() +
+  geom_text_repel()+
+  xlab("Mean DDist\nCodon vs. Itself (Real), Same Amino Acid") +
+  ylab("Mean DDist\nCodon vs. Itself (ROC Sim), Same Amino Acid") +
+  stat_cor(method="spearman",label.sep = "\n") +
+  geom_abline(intercept=0,slope=1,linetype="dashed") +
+  facet_wrap(~condition_group) +
+  theme_cowplot() +
+  ggtitle("Comparing mean bond angles distances of\ncodons compared to itself:\nReal vs ROC simulated protein-coding sequences")
+p
+
+```
+
+```{r fig.width=5}
+sim.random <- read_csv("/data2/cope/proteins-1.0.0-natcom/dataverse_files_sim_w_ena_random//results/pointwise_cdist-simulated-3/pvals/cc-pvals.csv",col_types = cols())
+
+same.codon.sim <- sim.random %>% 
+  separate(subgroup1,into = c("AA1","Codon1"),remove = F) %>%
+  separate(subgroup2,into = c("AA2","Codon2"),remove = F) %>%
+  filter(subgroup1 == subgroup2) %>% 
+  group_by(condition_group,AA1) %>% 
+  summarize(Median.Same = mean(ddist,na.rm=T)) 
+diff.codon.sim <- sim.random %>% 
+  separate(subgroup1,into = c("AA1","Codon1"),remove = F) %>%
+  separate(subgroup2,into = c("AA2","Codon2"),remove = F) %>%
+  filter(subgroup1 != subgroup2) %>% 
+  group_by(condition_group,AA1) %>% 
+  summarize(Median.Diff = mean(ddist,na.rm=T))
+
+
+all.codon <- same.codon.sim %>% 
+  left_join(diff.codon.sim,by=c("condition_group","AA1"))
+
+p <- ggplot(all.codon,aes(x=Median.Same,y=Median.Diff,label=AA1)) +
+  geom_point() +
+  geom_text_repel()+
+  xlab("Mean DDist\nCodon vs. itself, Same Amino Acid") +
+  ylab("Mean DDist\nDifferent Synonyms, Same Amino Acid") +
+  stat_cor(method="spearman",label.sep = "\n") +
+  facet_wrap(~condition_group) +
+  theme_cowplot() +
+  ggtitle("Comparing mean bond angles distances of\ncodons compared to itself vs. synonyms:\nSimulated protein-coding sequences")
+p
+ggsave2("figS1_for_mbe.pdf",plot=p,width=7,height=7)
+```
+
+
+
+
+
+```{r}
+real <- read_csv("/data2/cope/Codon_usage_prot_structure_angles/Rosenberg_analysis/dataverse_files/results/pointwise_cdist-natcom/pvals/cc-pvals.csv",col_types = cols())
+sim <- read_csv("/data2/cope/proteins-1.0.0-natcom/dataverse_files_sim_w_ena_random//results/pointwise_cdist-simulated-3/pvals/cc-pvals.csv",col_types = cols())
+
+combined <- real %>% 
+  left_join(sim,by=c("condition_group","subgroup1","subgroup2"),suffix=c("_Real","_Sim")) #%>%
+  #filter(condition_group %in% c("HELIX","SHEET"))
+
+cor.test(unlist(combined$pval_Real),unlist(combined$pval_Sim),method="spearman")
+cor.test(unlist(combined$ddist_Real),unlist(combined$ddist_Sim),method="spearman")
+single.occ <- combined %>%
+  distinct(condition_group,subgroup1,.keep_all = T)
+cor.test(unlist(single.occ$phi1_mean_Real),unlist(single.occ$phi1_mean_Sim),method="spearman")
+cor.test(unlist(single.occ$psi1_mean_Real),unlist(single.occ$psi1_mean_Sim),method="spearman")
+cor.test(unlist(single.occ$phi2_mean_Real),unlist(single.occ$phi2_mean_Sim),method="spearman")
+cor.test(unlist(single.occ$psi2_mean_Real),unlist(single.occ$psi2_mean_Sim),method="spearman")
+
+all.real <- combined %>% filter(significant_Real == T)
+only.real <- combined %>% filter(significant_Real == T & significant_Sim == F)
+only.sim <- combined %>% filter(significant_Real == F & significant_Sim == T)
+both <- combined %>% filter(significant_Real == T & significant_Sim == T)
+
+print("Percentage of statistically significant cases")
+print("in simulated data also found in the real data:")
+print(nrow(both)/nrow(all.real))
+
+combined <- combined %>% mutate(Category = case_when(
+  significant_Real == T & significant_Sim == T ~ "Both",
+  significant_Real == F & significant_Sim == T ~ "Only Simulated",
+  significant_Real == T & significant_Sim == F ~ "Only Real",
+  significant_Real == F & significant_Sim == F ~ "Neither",
+)) %>% filter(!is.na(Category))
+
+pval.compare <- ggplot(combined,aes(x=pval_Real,y=pval_Sim)) +
+  geom_point() +
+  scale_x_log10() +
+  scale_y_log10() +
+  xlab("p-value\nReal Sequences") +
+  ylab("p-value\nSimulated Sequences") +
+  geom_abline(intercept=0,slope=1,linetype="dashed",color="red") +
+  stat_cor(method="spearman",label.sep="\n") +
+  theme_cowplot() +
+  ggtitle("Comparing p-values")
+
+test.compare <- ggplot(combined,aes(x=d12_Real,y=d12_Sim)) +
+  geom_point() +
+  xlab("D12\nReal Sequences") +
+  ylab("D12\nSimulated Sequences") +
+  geom_abline(intercept=0,slope=1,linetype="dashed",color="red") +
+  stat_cor(method="spearman",label.sep="\n") +
+  theme_cowplot() +
+  scale_x_log10() +
+  scale_y_log10() +
+  ggtitle("Comparing D12")
+
+test.compare <- ggplot(combined,aes(x=ddist_Real,y=ddist_Sim)) +
+  geom_point() +
+  xlab("DDist\nReal Sequences") +
+  ylab("DDist\nSimulated Sequences") +
+  geom_abline(intercept=0,slope=1,linetype="dashed",color="red") +
+  stat_cor(method="spearman",label.sep="\n") +
+  theme_cowplot() +
+  ggtitle("Comparing DDist statistics")
+
+
+combined.long <- combined %>% 
+  pivot_longer(-c(condition_group,subgroup1,subgroup2,Category),names_to = c(".value", "set"),names_pattern="(.*)_(.*)") %>%
+  mutate(sig=case_when(
+    set == "Sim"~"Simulated",
+    set == "Real" ~ "Real"
+  )) 
+
+sig.comp <- ggplot(combined.long,aes(x=Category,y=pval,fill=set)) +
+  geom_boxplot(notch=T) +
+  xlab("") +
+  ylab("p-value") +
+  theme_cowplot() +
+  labs(fill="Sequences") +
+  ggtitle("Comparing p-value distributions")
+
+
+
+
+
+```
+
+
+# Determining possible correlates with gene expression
+
+
+```{r}
+roc.phi<- read_csv("ROC_analysis/Ecoli_refseq_ena_K_1/run_1/Parameter_est/gene_expression.txt") %>%
+  dplyr::select(GeneID,Mean)
+ecoli <- readDNAStringSet("Ecoli/Ecoli_refseq_and_ena.fasta")
+length.df <- data.frame(GeneID=names(ecoli),Length=width(ecoli))
+length.df <- length.df %>%
+  mutate(GeneID = word(GeneID,1))
+
+
+
+roc.phi <- roc.phi %>% 
+  left_join(length.df,by="GeneID")
+
+genome.df <- read_csv("Rosenberg_analysis/dataverse_files/data-precs.csv")
+#genome.df <- read_csv("../proteins-1.0.0-natcom/dataverse_files_real_ata_high_vs_low_control/data-precs.csv")
+
+order.sum <- genome.df %>% 
+  distinct(unp_id,unp_idx,secondary) %>% 
+  mutate(order = ifelse(secondary %in% c("H","E","B","G","T","S"),1,0)) %>% 
+  group_by(unp_id) %>% 
+  dplyr::summarize(Freq = sum(order)/n())
+
+
+id.map <- read_tsv("/data2/cope/Codon_usage_prot_structure_angles/ecoli_id_map.tsv",col_types = cols()) %>% 
+  dplyr::select(Locus,uniprot_id) %>%
+  dplyr::rename(unp_id=uniprot_id) %>%
+  distinct(Locus,unp_id)
+
+una.ena <- read_csv("/data2/cope/Codon_usage_prot_structure_angles/Rosenberg_analysis/dataverse_files/meta-structs_filtered.csv",col_types = cols()) %>% 
+  left_join(id.map) %>%
+  left_join(roc.phi,by=c("Locus"="GeneID")) %>%
+  left_join(roc.phi,by=c("ena_id"="GeneID")) %>%
+  mutate(Mean = ifelse(!is.na(Mean.x),Mean.x,Mean.y),
+         Length = ifelse(!is.na(Length.x),Length.x,Length.y)) %>%
+  dplyr::select(-Mean.x,-Mean.y,-Length.x,-Length.y)
+
+genome.df  <- genome.df %>% 
+  left_join(una.ena,by=c("unp_id","pdb_id"))
+
+
+```
+
+
+```{r}
+library(ca)
+total.struct.length <- genome.df %>%
+  filter(name != "X" & secondary != "-") %>%
+  group_by(pdb_id) %>%
+  summarize(Structure.Length=n())
+
+genome.df.sum.aa <- genome.df %>%
+  filter(name != "X" & secondary != "-") %>%
+  # mutate(secondary = case_when(
+  #   secondary == "B" | secondary == "G" | secondary == "I" | secondary == "S" ~ "Other",
+  #   TRUE ~ secondary
+  # )) %>%
+  filter(secondary != "-") %>% 
+  left_join(total.struct.length) %>%
+  group_by(pdb_id,unp_id,name) %>%
+  dplyr::summarize(Length=mean(Structure.Length),
+                   Phi = mean(Mean),
+                   AA.Freq=n()) 
+
+
+genome.df.sum.aa.wide <- genome.df.sum.aa %>%
+  ungroup() %>%
+  pivot_wider(names_from=name,values_from = AA.Freq,values_fill=0) %>%
+  distinct(unp_id,.keep_all = T)
+                   
+fit<-ca(genome.df.sum.aa.wide[,5:ncol(genome.df.sum.aa.wide)])
+
+plot(fit,dim=c(2,3))
+plot(fit,dim=c(2,4))
+
+cor.test(log10(genome.df.sum.aa.wide$Phi),fit$rowcoord[,2],method="spearman")
+cor.test(log10(genome.df.sum.aa.wide$Phi),fit$rowcoord[,3],method="spearman")
+cor.test(log10(genome.df.sum.aa.wide$Phi),fit$rowcoord[,4],method="spearman")
+
+
+
+
+
+
+
+
+```
+
+
+
+```{r}
+obs.per.prot <- genome.df %>%
+  group_by(pdb_id,unp_id) %>%
+  dplyr::summarize(Phi = mean(Mean),
+                   Length=mean(Length/3),
+                   Total=n())
+
+genome.df.sum.ss <- genome.df %>%
+  group_by(pdb_id,unp_id,secondary) %>%
+  dplyr::summarize(SS.Count=n()) %>%
+  left_join(obs.per.prot) %>%
+  mutate(SS.Freq = SS.Count/Total) %>%
+  ungroup() %>%
+  filter(secondary %in% c("H","E")) %>%
+  mutate(secondary = ifelse(secondary == "E","SHEET","HELIX")) %>%
+  distinct(unp_id,secondary,.keep_all = T)
+  
+
+ss.freq.per.gene <- ggplot(genome.df.sum.ss,aes(x=Phi,y=SS.Freq)) +
+  geom_point() +
+  stat_cor(method="spearman") +
+  theme_cowplot() +
+  scale_x_log10() +
+  xlab("Gene Expression\nROC-SEMPPR Estimate") +
+  ylab("Secondary Structure Frequency\nper Gene") +
+  facet_wrap(~secondary) 
+ss.freq.per.gene
+
+ggsave2("fig2_for_mbe.pdf",plot=ss.freq.per.gene)
+
+
+```
+
+
+
+
