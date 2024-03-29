@@ -8,11 +8,14 @@ output:
 ---
 
 ```{r setup, include=FALSE}
-library(AnaCoDa,lib.loc="~/AnaCoDa_installs/develop/")
+library(AnaCoDa,lib.loc="~/AnaCoDa_installs/ignore_bad_codons_simulation/")
 library(tidyverse)
 library(Biostrings)
 library(ggpubr)
 library(cowplot)
+library(patchwork)
+library(ggrepel)
+
 getSeqIDs <- function(fasta.file)
 {
   fasta <- Biostrings::readDNAStringSet(fasta.file)
@@ -30,12 +33,12 @@ The E. coli K12 MG1655 was downloaded from NCBI-RefSeq (GCF 000005845.2). Rosenb
 
 # Sanity check model fit
 
-ROC-SEMPPR assumes that the biggest driver of variation in codon usage between genes is gene expression, which is well-known to be the best correlate with gene-specific codon usage bias. ROC-SEMPPR estimates of gene expression ($\phi$) should be at least moderately correlated with empirical data. After reanalzying ribo-seq datasets L29 and L33 from Mohammad et al. eLife 2019 with riboviz 2, we compared the average TPM values to the ROC-SEMPPR estimates. The moderate correlation indicates ROC-SEMPPR is an adequate model for quantifying codon usage in *E. coli*.  
+ROC-SEMPPR assumes that the biggest driver of variation in codon usage between genes is gene expression, which is well-known to be the best correlate with gene-specific codon usage bias. ROC-SEMPPR estimates of gene expression ($\phi$) should be at least moderately correlated with empirical data. After reanalzying ribo-seq datasets L29 and L33 from Mohammad et al. eLife 2019 with riboviz 2, we compared the average TPM values to the ROC-SEMPPR estimates. The moderate correlation indicates ROC-SEMPPR is an adequate, but imperfect, model for quantifying codon usage in *E. coli*.
 
 ```{r}
-roc.phi <- read_csv("ROC_analysis/Ecoli_refseq_no_yp_ena_K_2/run_2/Parameter_est/gene_expression.txt",col_types = cols())
+roc.phi <- read_csv("ROC_analysis/Ecoli_refseq_ena_K_1/run_2/Parameter_est/gene_expression.txt",col_types = cols())
 ribo.seq <- read_csv("Ecoli/ecoli_riboseq.csv",col_types = cols())
-seq.ids <- getSeqIDs("Ecoli/Ecoli_refseq_no_yp_pseudo_and_ena.fasta")
+seq.ids <- getSeqIDs("Ecoli/Ecoli_refseq_and_ena.fasta")
 
 ## This works because the gene order in gene_expression.txt is in the the same order as the FASTA
 roc.phi <- roc.phi %>% mutate(Locus = seq.ids)
@@ -54,201 +57,284 @@ emp.vs.roc <- ggplot(roc.ribo,aes(x=Mean.tpm/mean(Mean.tpm), y=Mean)) +
   scale_y_log10() +
   ggtitle("Comparing estimates \nof gene expression") +
   stat_cor(method="spearman",label.sep="\n") + ## produces our correlation
-  theme_cowplot() 
+  theme_cowplot()
 emp.vs.roc
 
 ```
 
-
 ## Compare the real and simulated protein coding sequences.
 
-Compare the counts of each codon observed in each protein-coding sequence. Each dot represents the number of occurrences of a specific codon in a specific gene. As can be seen, the codon usage of our simulated genes generally reflects the codon usage of real genes. 
+We compare four different simulations: Uniform, Mutation-Empirical (mutation bias only using empirical data), Mutation-ROC (mutation bias only using ROC-SEMPPR estimates), and SMDE (selection-mutation-drift equilibrium based on ROC-SEMPPR estimates). Below, we compare the codon counts for the Mutation and SMDE simulations to the true codon counts.
 
 ```{r}
-real.genome <- initializeGenomeObject("Ecoli/Ecoli_refseq_no_yp_pseudo_and_ena.fasta")
-real.counts <- getCodonCounts(real.genome)
-sim.genome <- initializeGenomeObject("Ecoli/simulatedEcoli_w_ena_k_2.fasta")
-sim.counts <- getCodonCounts(sim.genome)
+compareRealvsSimulateCodonCounts <- function(real.fasta,sim.fasta)
+{
+  real.genome <- initializeGenomeObject(real.fasta)
+  real.counts <- getCodonCounts(real.genome)
+  sim.genome <- initializeGenomeObject(sim.fasta)
+  sim.counts <- getCodonCounts(sim.genome)
+  
+  real.counts.long <- as.data.frame(real.counts) %>% 
+    rownames_to_column("Locus") %>% 
+    pivot_longer(-Locus,names_to="Codon",values_to="Counts")
+  
+  sim.counts.long <- as.data.frame(sim.counts) %>% 
+    rownames_to_column("Locus") %>% 
+    pivot_longer(-Locus,names_to="Codon",values_to="Counts")
+  
+  counts.long <- real.counts.long %>% 
+    left_join(sim.counts.long,by=c("Locus","Codon"),suffix=c("_Real","_Sim"))
+  
+  compare.counts <- ggplot(counts.long,aes(x=Counts_Real,y=Counts_Sim)) +
+    geom_point() +
+    stat_cor(method="spearman",label.sep="\n") +
+    theme_cowplot() +
+    geom_abline(intercept=0,slope=1,linetype="dashed") +
+    xlab("Codon Counts Per Gene\nReal Sequences") +
+    ylab("Codon Counts Per Gene\nSimulated Sequences") +
+    #theme(aspect.ratio=1) +
+    ggtitle("Comparing codon usage")
+  compare.counts
+  return(compare.counts)
+}
 
-real.counts.long <- as.data.frame(real.counts) %>% 
-  rownames_to_column("Locus") %>% 
-  pivot_longer(-Locus,names_to="Codon",values_to="Counts")
-
-sim.counts.long <- as.data.frame(sim.counts) %>% 
-  rownames_to_column("Locus") %>% 
-  pivot_longer(-Locus,names_to="Codon",values_to="Counts")
-
-counts.long <- real.counts.long %>% 
-  left_join(sim.counts.long,by=c("Locus","Codon"),suffix=c("_Real","_Sim"))
-
-compare.counts <- ggplot(counts.long,aes(x=Counts_Real,y=Counts_Sim)) +
-  geom_point() +
-  stat_cor(method="spearman",label.sep="\n") +
-  theme_cowplot() +
-  geom_abline(intercept=0,slope=1,linetype="dashed") +
-  xlab("Codon Counts Per Gene\nReal Sequences") +
-  ylab("Codon Counts Per Gene\nSimulated Sequences") +
-  #theme(aspect.ratio=1) +
-  ggtitle("Comparing codon usage")
-compare.counts
 
 ```
 
+
+### SMDE model
+Compare the counts of each codon observed in each protein-coding sequence simulated under the SMDE model. Each dot represents the number of occurrences of a specific codon in a specific gene. As can be seen, the codon usage of our simulated genes generally reflects the codon usage of real genes. 
+
+```{r}
+smde.compare.counts <- compareRealvsSimulateCodonCounts("Ecoli/Ecoli_refseq_and_ena.fasta","Ecoli/simulatedEcoli_w_ena_sim_2.fasta")
+smde.compare.counts
+```
+
+### Mutation-ROC
+
+Same as above, but only accounting for mutation biases as estimated via ROC-SEMPPR. 
+
+```{r}
+mut.bias.roc.compare.counts <- compareRealvsSimulateCodonCounts("Ecoli/Ecoli_refseq_and_ena.fasta","Ecoli/simulatedEcoli_w_ena_roc_mut_bias_only.fasta")
+mut.bias.roc.compare.counts <- mut.bias.roc.compare.counts + ggtitle("Comparing codon usage:\nMutation bias only (ROC)")
+mut.bias.roc.compare.counts
+```
+
+
+### Mutation-Empirical
+
+Same as above, but only accounting for mutation biases as estimated via mutation accumumlation experiments taken from Long et al. 2018.
+
+```{r}
+mut.bias.emp.compare.counts <- compareRealvsSimulateCodonCounts("Ecoli/Ecoli_refseq_and_ena.fasta","Ecoli/simulatedEcoli_w_ena_empirical_mut_bias_only.fasta")
+mut.bias.emp.compare.counts <- mut.bias.emp.compare.counts + ggtitle("Comparing codon usage:\nMutation bias only (Empirical)")
+mut.bias.emp.compare.counts
+```
+
+
+```{r fig.height=3,fig.width=5}
+mut.bias.compare.counts <- mut.bias.emp.compare.counts | mut.bias.roc.compare.counts + plot_annotation(tag_levels = "A")
+mut.bias.compare.counts
+ggsave2("Figures/figS2.pdf")
+```
 
 # Format simulated protein-coding sequences
 
 This will create the necessary file for analyzing the simulated protein-coding sequences using the Rosenberg et al. analysis pipeline downloaded from Zenodo. The real data was downloaded from the site listed under Data Availability in Rosenberg et al.
 
 ```{r}
-genome <- readDNAStringSet("Ecoli/simulatedEcoli_w_ena_k_2.fasta")
-genome.df <- lapply(genome,function(x)
+convertFASTAtoCSV <- function(fasta.file,output.file,id.map)
+{
+  genome <- readDNAStringSet(fasta.file)
+  genome.df <- lapply(genome,function(x)
+    {
+      sst <- strsplit(as.character(x), "")[[1]]
+      codon.seq <- paste0(sst[c(T,F,F)], sst[c(F,T,F)],sst[c(F,F,T)])
+      codon.df <- data.frame(Position=1:length(codon.seq),Codon=codon.seq)
+  }) %>% bind_rows(.id="Locus")
+  genome.df.ena <- id.map %>% 
+    left_join(genome.df,by="Locus") %>%
+    dplyr::select(pdb_id,unp_id,Position,Codon)
+  
+  write_csv(genome.df.ena,output.file)
+}
+
+createFileForRosenbergAnalysis <- function(simulated.data.file,
+                                           real.data.file,
+                                           write.output.file = T,
+                                           output.file = "simulated_data.csv")
+{
+  ecoli.df <- read_csv(simulated.data.file,col_types = cols()) %>%
+    dplyr::rename(res_id=Position) %>%
+    filter(Codon %in% AnaCoDa::codons()) %>% 
+    mutate(res_id_offset = case_when(
+      unp_id == "P0AA89" ~ res_id + 114, # determined via manual inspection
+      unp_id == "P36655" ~ res_id + 77,  # determined via manual inspection
+      TRUE ~ res_id - 1)) %>% 
+    rowwise() %>%
+    mutate(name=AnaCoDa::codonToAA(Codon)) %>%
+    ungroup() %>%
+    mutate(name = ifelse(name == "Z","S",name)) %>%
+    filter(!Codon %in% c("TAA","TGA","TAG"))
+
+  real.data <- read_csv(real.data.file,col_types = cols())
+  
+  real.data <- real.data %>% 
+    filter(!unp_id %in% c("P09883","A0A1B3B7F6","O82882")) 
+  ## AnaCoDa software ignored these genes due to 
+  ## various quality control issues (e.g. length not divisible by 3)
+  
+  sim.data.offset.unp <- real.data %>% 
+    inner_join(ecoli.df,by=c("pdb_id","unp_id","unp_idx" = "res_id_offset","name")) %>% 
+    dplyr::select(-res_id.y) %>%
+    dplyr::rename(res_id=res_id.x)
+  
+  sim.data <- sim.data.offset.unp %>% 
+    filter(!is.na(Codon)) %>% 
+    mutate(codon = Codon,codon_opts=Codon) %>% 
+    dplyr::select(-Codon)
+  
+  if (write.output.file)
   {
-    sst <- strsplit(as.character(x), "")[[1]]
-    codon.seq <- paste0(sst[c(T,F,F)], sst[c(F,T,F)],sst[c(F,F,T)])
-    codon.df <- data.frame(Position=1:length(codon.seq),Codon=codon.seq)
-}) %>% bind_rows(.id="Locus")
+    write.csv(sim.data,output.file)
+  }
+  return(sim.data.offset.unp)
+}
 
-id.map <- read_tsv("/data2/cope/Codon_usage_prot_structure_angles/ecoli_id_map.tsv",col_types = cols()) %>% 
-  dplyr::select(Locus,uniprot_id) %>%
-  dplyr::rename(unp_id=uniprot_id)
-
-una.ena <- read_csv("/data2/cope/Codon_usage_prot_structure_angles/Rosenberg_analysis/dataverse_files/meta-structs_filtered.csv",col_types = cols()) %>% 
-  dplyr::select(ena_id,unp_id,pdb_id) %>%
-  dplyr::rename(Locus=ena_id) %>%
-  distinct(Locus, unp_id, pdb_id, .keep_all = TRUE)
-
-genome.df.ena <- una.ena %>% 
-  left_join(genome.df,by="Locus") %>%
-  dplyr::select(pdb_id,unp_id,Position,Codon)
-
-write_csv(genome.df.ena,"/data2/cope/Codon_usage_prot_structure_angles/Ecoli/simulatedEcoli_w_ena_k_2.csv")
-
-
-```
-
-
-
-```{r}
-ecoli.df <- read_csv("/data2/cope/Codon_usage_prot_structure_angles/Ecoli/simulatedEcoli_w_ena.csv",col_types = cols()) %>%
-  dplyr::rename(res_id=Position) %>%
-  filter(Codon %in% AnaCoDa::codons()) %>% 
-  mutate(res_id_offset = case_when(
-    unp_id == "P0AA89" ~ res_id + 114, # determined via manual inspection
-    unp_id == "P36655" ~ res_id + 77,  # determined via manual inspection
-    TRUE ~ res_id - 1)) %>% 
-  rowwise() %>%
-  mutate(name=AnaCoDa::codonToAA(Codon)) %>%
-  ungroup() %>%
-  mutate(name = ifelse(name == "Z","S",name)) %>%
-  filter(!Codon %in% c("TAA","TGA","TAG"))
-
-real.data <- read_csv("/data2/cope/Codon_usage_prot_structure_angles/Rosenberg_analysis/dataverse_files/data-precs.csv",col_types = cols())
-
-real.data <- real.data %>% 
-  filter(!unp_id %in% c("P09883","A0A1B3B7F6","O82882")) 
-## AnaCoDa software ignored these genes due to 
-## various quality control issues (e.g. length not divisible by 3)
-
-sim.data.offset.unp <- real.data %>% 
-  inner_join(ecoli.df,by=c("pdb_id","unp_id","unp_idx" = "res_id_offset","name")) %>% 
-  dplyr::select(-res_id.y) %>%
-  dplyr::rename(res_id=res_id.x)
-
-missing <- sim.data.offset.unp %>% 
+calculateMissing <- function(sim.vs.real)
+{
+  missing <- sim.vs.real %>% 
   filter(is.na(Codon))
 
-missing <- missing %>% 
-  filter(codon != "---") %>% 
-  group_by(unp_id) %>% 
-  summarize(Total = n()) %>% 
-  arrange(desc(Total)) 
+  missing <- missing %>% 
+    filter(codon != "---") %>% 
+    group_by(unp_id) %>% 
+    summarize(Total = n()) %>% 
+    arrange(desc(Total)) 
+}
 
-sim.data <- sim.data.offset.unp %>% 
-  filter(!is.na(Codon)) %>% 
-  mutate(codon = Codon,codon_opts=Codon) %>% 
-  dplyr::select(-Codon)
-
-
-#write.csv(sim.data,"/data2/cope/proteins-1.0.0-natcom//dataverse_files_sim_w_ena_k2/data-precs.csv")
 ```
+
+
+## SMDE model
+
+```{r}
+id.map <- read_tsv("ecoli_id_map.tsv",col_types = cols()) %>% 
+    dplyr::select(Locus,uniprot_id) %>%
+    dplyr::rename(unp_id=uniprot_id)
+  
+una.ena <- read_csv("Rosenberg_analysis/dataverse_files/meta-structs_filtered.csv",col_types = cols()) %>% 
+    dplyr::select(ena_id,unp_id,pdb_id) %>%
+    dplyr::rename(Locus=ena_id) %>%
+    distinct(Locus, unp_id, pdb_id, .keep_all = TRUE)
+
+## Using SMDE model fit -- selection and mutation bias.
+#convertFASTAtoCSV("Ecoli/simulatedEcoli_w_ena_sim.fasta","Ecoli/simulatedEcoli_w_ena.csv",id.map=una.ena)
+
+## Using ROC-based estimates of mutation bias
+#convertFASTAtoCSV("Ecoli/simulatedEcoli_w_ena_mut_bias_only.fasta","Ecoli/simulatedEcoli_w_ena_mut_bias_only.csv",id.map=una.ena)
+
+## Using empirical estimates of mutation bias. Note that this was simulated using slightly different model fit 
+## that had mutation bias fixed at the empirical estimates
+#convertFASTAtoCSV("Ecoli/simulatedEcoli_w_ena_empirical_mut_bias_only.fasta","Ecoli/simulatedEcoli_w_ena_empirical_mut_bias_only.csv",id.map=una.ena)
+```
+
+```{r}
+smde.sim.vs.real <- createFileForRosenbergAnalysis("Ecoli/simulatedEcoli_w_ena.csv",
+                               "Rosenberg_analysis/dataverse_files/data-precs.csv",
+                               write.output.file = F
+                               )
+
+mut.bias.roc.sim.vs.real <- createFileForRosenbergAnalysis("Ecoli/simulatedEcoli_w_ena_roc_mut_bias_only.csv",
+                               "Rosenberg_analysis/dataverse_files/data-precs.csv",
+                               write.output.file = F,
+                               
+                               )
+
+mut.bias.emp.sim.vs.real <- createFileForRosenbergAnalysis("Ecoli/simulatedEcoli_w_ena_empirical_mut_bias_only.csv",
+                               "Rosenberg_analysis/dataverse_files/data-precs.csv",
+                               write.output.file = F,
+                               
+                               )
+
+```
+
+
 
 
 # Check randomization of codon usage by position
 
 Notably, ROC-SEMPPR does not consider position when analyzing codon usage data. Thus, simulated data should mostly eliminate signals that reflect position-specific selective pressures on codon usage. As can be seen in the figure below, the position of synonymous codons across the simulated data are effectively randomized compared to the real data, with the horizontal line representing perfect randomization of the positions of synonymous codons. There does appear to be a bias upwards for most amino acids, but this is likely due to the fact that some genes are heavily biased towards certain codons.
 
-```{r fig.width=9,fig.height=7}
-percentage.agree <- sim.data.offset.unp %>% 
-  filter(codon_score == 1) %>%
-  filter(secondary != "-") %>%
-  mutate(secondary = case_when(
-    secondary %in% c("T","S","B","G","I") ~ "Other",
-    TRUE ~ secondary
-  )) %>%
-  #filter(secondary %in% c("H","E")) %>%
-  group_by(name,secondary) %>%
-  mutate(Agree = ifelse(codon == Codon,1,0)) %>% 
-  summarize(Total = n(), Total.Agree = sum(Agree),Agree.Percent=Total.Agree/Total)
+```{r}
+plotRandomization <- function(sim.vs.real)
+{
+  percentage.agree <- sim.vs.real %>% 
+    filter(codon_score == 1) %>%
+    filter(secondary != "-") %>%
+    mutate(secondary = case_when(
+      secondary %in% c("T","S","B","G","I") ~ "Other",
+      TRUE ~ secondary
+    )) %>%
+    group_by(name,secondary) %>%
+    mutate(Agree = ifelse(codon == Codon,1,0)) %>% 
+    summarize(Total = n(), Total.Agree = sum(Agree),Agree.Percent=Total.Agree/Total)
 
-percentage.agree <- percentage.agree %>% filter(!name %in% c("M","W"))
+  percentage.agree <- percentage.agree %>% 
+    filter(!name %in% c("M","W"))
+  
+  percentage.agree <- percentage.agree %>% 
+    ungroup() %>% 
+    rowwise() %>% 
+    mutate(Codon.Class = length(AnaCoDa::AAToCodon(name)),
+           Codon.Class = ifelse(name == "S",Codon.Class+2,Codon.Class),
+           Uniform.Expectation = case_when(Codon.Class == 2 ~ 0.5,
+                                           Codon.Class == 3 ~ 1/3,
+                                           Codon.Class == 4 ~ 0.25,
+                                           Codon.Class == 6 ~ 1/6)
+      
+           
+           )
+  
+  # 95% CI based on normal approximation
+  percentage.agree <- percentage.agree %>%
+    group_by(name,secondary) %>%
+    mutate(Lower.CI = Agree.Percent - 1.96 * sqrt((Agree.Percent * (1-Agree.Percent))/Total),
+           Upper.CI = Agree.Percent + 1.96 * sqrt((Agree.Percent * (1-Agree.Percent))/Total)
+    )
+  
+  randomization <- ggplot(percentage.agree,aes(x=name,y=Agree.Percent,color=secondary)) + 
+    geom_point(size=1) +
+    geom_errorbar(aes(ymin=Lower.CI,ymax=Upper.CI),width=0) +
+    geom_hline(aes(yintercept = Uniform.Expectation),linetype="dashed") + 
+    xlab("Amino Acid") +
+    ylab("Percentage of sites with same codon\nbetween real and simulated CDS") +
+    ylim(c(0,1)) +
+    theme_cowplot() +
+   #guides(color=guide_legend(title="Number of Codons")) +
+    facet_wrap(~Codon.Class,scales="free_x")+ 
+    ggtitle("Randomization of\ncodons by position") 
+  return(randomization)
+}
 
-percentage.agree <- percentage.agree %>% 
-  ungroup() %>% 
-  rowwise() %>% 
-  mutate(Codon.Class = length(AnaCoDa::AAToCodon(name)),
-         Codon.Class = ifelse(name == "S",Codon.Class+2,Codon.Class),
-         Uniform.Expectation = case_when(Codon.Class == 2 ~ 0.5,
-                                         Codon.Class == 3 ~ 1/3,
-                                         Codon.Class == 4 ~ 0.25,
-                                         Codon.Class == 6 ~ 1/6)
-    
-         
-         )
-
-# 95% CI based on normal approximation
-percentage.agree <- percentage.agree %>%
-  group_by(name,secondary) %>%
-  mutate(Lower.CI = Agree.Percent - 1.96 * sqrt((Agree.Percent * (1-Agree.Percent))/Total),
-         Upper.CI = Agree.Percent + 1.96 * sqrt((Agree.Percent * (1-Agree.Percent))/Total)
-  )
-
-randomization <- ggplot(percentage.agree,aes(x=name,y=Agree.Percent,color=secondary)) + 
-  geom_point(size=1) +
-  geom_errorbar(aes(ymin=Lower.CI,ymax=Upper.CI),width=0) +
-  geom_hline(aes(yintercept = Uniform.Expectation),linetype="dashed") + 
-  xlab("Amino Acid") +
-  ylab("Percentage of sites with same codon\nbetween real and simulated CDS") +
-  ylim(c(0,1)) +
-  theme_cowplot() +
- #guides(color=guide_legend(title="Number of Codons")) +
-  facet_wrap(~Codon.Class,scales="free_x")+ 
-  ggtitle("Randomization of\ncodons by position") 
-randomization
 ```
 
+```{r}
+smde.vs.real.randomization <- plotRandomization(smde.sim.vs.real) + ggtitle("Randomization of codon usage by position:\nSMDE model")
+mut.bias.roc.vs.real.randomization <- plotRandomization(mut.bias.roc.sim.vs.real) + ggtitle("Randomization of codon usage by position:\nMutation-ROC model")
+mut.bias.emp.vs.real.randomization <- plotRandomization(mut.bias.emp.sim.vs.real) + ggtitle("Randomization of codon usage by position:\nMutation-Empirical model")
 
-```{r warning = F}
-real.data <- read_csv("/data2/cope/Codon_usage_prot_structure_angles/Rosenberg_analysis/dataverse_files/data-precs.csv",col_types = cols()) %>%
-  filter(codon_score == 1 & codon != "---" & secondary != "-") 
 
-aa.used <- real.data %>%
-  filter(str_detect(codon,"[AGCT]{3}")) %>%
-  distinct(unp_id,unp_idx,.keep_all = T) %>%
-  dplyr::select(unp_id,unp_idx,name) %>%
-  rowwise() %>%
-  mutate(new.codon = case_when(
-    name == "S" ~ dqsample::sample(c(AAToCodon(name),AAToCodon("Z")),1),
-    T ~ dqsample::sample(AAToCodon(name),1)
-    )
-  )
 
-sim.data <- real.data %>% 
-  left_join(aa.used,by=c("unp_id","unp_idx","name")) %>%
-  mutate(codon = ifelse(str_detect(codon,"[AGCT]{3}"),new.codon,codon),
-         codon_opts = ifelse(str_detect(codon,"[AGCT]{3}"),new.codon,codon)) %>%
-  dplyr::select(-new.codon)
+smde.vs.real.randomization
+mut.bias.roc.vs.real.randomization
+mut.bias.emp.vs.real.randomization
+```
 
-write_csv(sim.data,"/data2/cope/proteins-1.0.0-natcom/dataverse_files_sim_w_ena_random/data-precs.csv")
+```{r fig.height=4, fig.width=4}
+p <- mut.bias.emp.vs.real.randomization / mut.bias.roc.vs.real.randomization + plot_annotation(tag_levels = "A") + plot_layout(guides = "collect")
+
+ggsave2("Figures/figS3.pdf",p)
 
 
 ```
@@ -256,44 +342,61 @@ write_csv(sim.data,"/data2/cope/proteins-1.0.0-natcom/dataverse_files_sim_w_ena_
 
 # Compare the results of Rosenberg et al. analysis
 
+## SMDE model comparison
+
+```{r}
+combineRosenbergOutput <- function(result.1.path,result.2.path)
+{
+  result.1 <- read_csv(result.1.path,col_types = cols())
+  result.2 <- read_csv(result.2.path,col_types = cols())
+
+  combined <- result.1 %>% 
+    left_join(result.2,by=c("condition_group","subgroup1","subgroup2"),suffix=c("_Real","_Sim")) #%>%
+  
+  combined <- combined %>% mutate(Category = case_when(
+    significant_Real == T & significant_Sim == T ~ "Both",
+    significant_Real == F & significant_Sim == T ~ "Only Simulated",
+    significant_Real == T & significant_Sim == F ~ "Only Real",
+    significant_Real == F & significant_Sim == F ~ "Neither",
+  )) %>% filter(!is.na(Category))
+
+  return(combined)
+}
+
+
+```
+
 If there is a true correlation between codon usage and protein dihedral bond angles, the simulated data should show little of this signal compared to the real data. However, strong agreement between the real and simulated data could indicate the method of Rosenberg et al. is detecting signals related to selection for translation efficiency, as highly expressed genes are expected to be biased towards faster synonymous codons compared to low expression genes. As can be seen below, we see high correlation between the results of the analysis of real and simulated data. Overall, ~90% of the synonymous codon pairs found to have statistically significant differences in the dihedral bond angle distributions in the real data were also found to be statistically significant in the simulated data. As shown by the boxplots, even in cases where the a synonymous codon pair was found to be statistically significant in only one of the datasets, the same pair in the other dataset tended to have a smaller p-value.
 
 ```{r warning = F}
 
-real <- read_csv("/data2/cope/Codon_usage_prot_structure_angles/Rosenberg_analysis/dataverse_files/results/pointwise_cdist-natcom/pvals/cc-pvals.csv",col_types = cols())
-sim <- read_csv("/data2/cope/Codon_usage_prot_structure_angles/Rosenberg_analysis/dataverse_files_sim_w_ena/results/pointwise_cdist-simulated/pvals/cc-pvals.csv",col_types = cols())
-#sim <- read_csv("/data2/cope/proteins-1.0.0-natcom/dataverse_files_sim_w_ena_random//results/pointwise_cdist-simulated-3/pvals/cc-pvals.csv",col_types = cols())
+combined.smde <- combineRosenbergOutput("Rosenberg_analysis/dataverse_files/00_results_original_code/00_pointwise_cdist-natcom-kernel-size-2-bootstrap-25-perm-200/pvals/cc-pvals.csv","Rosenberg_analysis/dataverse_files_sim_w_ena_smde/00_results_original_code/00_pointwise_cdist-simulated-genes-kernel-size-2-bootstrap-25-perm-200/pvals/cc-pvals.csv")
 
-combined <- real %>% 
-  left_join(sim,by=c("condition_group","subgroup1","subgroup2"),suffix=c("_Real","_Sim")) #%>%
-  #filter(condition_group %in% c("HELIX","SHEET"))
+combined.smde <- combined.smde %>%
+  separate(subgroup1,into=c("AA1","Codon1"),remove=F) %>%
+  separate(subgroup2,into=c("AA2","Codon2"),remove=F)
 
-cor.test(unlist(combined$pval_Real),unlist(combined$pval_Sim),method="spearman")
-cor.test(unlist(combined$ddist_Real),unlist(combined$ddist_Sim),method="spearman")
-single.occ <- combined %>%
+cor.test(unlist(combined.smde$pval_Real),unlist(combined.smde$pval_Sim),method="spearman")
+cor.test(unlist(combined.smde$ddist_Real),unlist(combined.smde$ddist_Sim),method="spearman")
+single.occ <- combined.smde %>%
   distinct(condition_group,subgroup1,.keep_all = T)
 cor.test(unlist(single.occ$phi1_mean_Real),unlist(single.occ$phi1_mean_Sim),method="spearman")
 cor.test(unlist(single.occ$psi1_mean_Real),unlist(single.occ$psi1_mean_Sim),method="spearman")
 cor.test(unlist(single.occ$phi2_mean_Real),unlist(single.occ$phi2_mean_Sim),method="spearman")
 cor.test(unlist(single.occ$psi2_mean_Real),unlist(single.occ$psi2_mean_Sim),method="spearman")
 
-all.real <- combined %>% filter(significant_Real == T)
-only.real <- combined %>% filter(significant_Real == T & significant_Sim == F)
-only.sim <- combined %>% filter(significant_Real == F & significant_Sim == T)
-both <- combined %>% filter(significant_Real == T & significant_Sim == T)
+all.real <- combined.smde %>% filter(significant_Real == T)
+all.sim <- combined.smde %>% filter(significant_Sim == T)
+only.real <- combined.smde %>% filter(significant_Real == T & significant_Sim == F)
+only.sim <- combined.smde %>% filter(significant_Real == F & significant_Sim == T)
+both <- combined.smde %>% filter(significant_Real == T & significant_Sim == T)
 
 print("Percentage of statistically significant cases")
 print("in simulated data also found in the real data:")
 print(nrow(both)/nrow(all.real))
 
-combined <- combined %>% mutate(Category = case_when(
-  significant_Real == T & significant_Sim == T ~ "Both",
-  significant_Real == F & significant_Sim == T ~ "Only Simulated",
-  significant_Real == T & significant_Sim == F ~ "Only Real",
-  significant_Real == F & significant_Sim == F ~ "Neither",
-)) %>% filter(!is.na(Category))
 
-pval.compare <- ggplot(combined,aes(x=pval_Real,y=pval_Sim)) +
+pval.compare.smde <- ggplot(combined.smde,aes(x=pval_Real,y=pval_Sim)) +
   geom_point() +
   scale_x_log10() +
   scale_y_log10() +
@@ -303,59 +406,388 @@ pval.compare <- ggplot(combined,aes(x=pval_Real,y=pval_Sim)) +
   stat_cor(method="spearman",label.sep="\n") +
   theme_cowplot() +
   ggtitle("Comparing p-values")
+pval.compare.smde
 
-test.compare <- ggplot(combined,aes(x=d12_Real,y=d12_Sim)) +
-  geom_point() +
-  xlab("D12\nReal Sequences") +
-  ylab("D12\nSimulated Sequences") +
-  geom_abline(intercept=0,slope=1,linetype="dashed",color="red") +
-  stat_cor(method="spearman",label.sep="\n") +
-  theme_cowplot() +
-  scale_x_log10() +
-  scale_y_log10() +
-  ggtitle("Comparing D12")
 
-test.compare <- ggplot(combined,aes(x=ddist_Real,y=ddist_Sim)) +
+test.compare.smde.all <- ggplot(combined.smde,aes(x=ddist_Real,y=ddist_Sim)) +
   geom_point() +
   xlab("DDist\nReal Sequences") +
   ylab("DDist\nSimulated Sequences") +
   geom_abline(intercept=0,slope=1,linetype="dashed",color="red") +
-  stat_cor(method="spearman",label.sep="\n") +
+  stat_cor(method="spearman",show.legend = F,label.sep="\n") +
+  labs(color="AA") +
   theme_cowplot() +
-  ggtitle("Comparing DDist statistics")
+  ggtitle("Comparing DDist statistics:\nSMDE Model")
+test.compare.smde
+
+test.compare.smde <- ggplot(combined.smde,aes(x=ddist_Real,y=ddist_Sim)) +
+  geom_point() +
+  xlab("DDist\nReal Sequences") +
+  ylab("DDist\nSimulated Sequences") +
+  geom_abline(intercept=0,slope=1,linetype="dashed",color="red") +
+  stat_cor(method="spearman",show.legend = F,label.sep="\n") +
+  labs(color="AA") +
+  theme_cowplot() +
+  ggtitle("Comparing DDist statistics:\nSMDE Model") +
+  facet_wrap(~condition_group,nrow=4)
+test.compare.smde
 
 
-combined.long <- combined %>% 
+combined.smde.long <- combined.smde %>% 
   pivot_longer(-c(condition_group,subgroup1,subgroup2,Category),names_to = c(".value", "set"),names_pattern="(.*)_(.*)") %>%
   mutate(sig=case_when(
     set == "Sim"~"Simulated",
     set == "Real" ~ "Real"
   )) 
 
-sig.comp <- ggplot(combined.long,aes(x=Category,y=pval,fill=set)) +
+sig.comp.smde <- ggplot(combined.smde.long,aes(x=Category,y=pval,fill=set)) +
+  geom_boxplot(notch=T) +
+  ylab("p-value") +
+  theme_cowplot() +
+  labs(fill="Sequences") +
+  scale_y_log10() +
+  xlab("Significant") +
+  ggtitle("Comparing p-value distributions\nSMDE Model")
+
+sig.comp.smde
+
+
+```
+
+
+# Generate figure 2 for publication
+
+Below is the final figure to be include in the Matters Arising manuscript. 
+
+```{r fig.width=14,fig.height=14}
+
+p <- ((emp.vs.roc/smde.compare.counts)|smde.vs.real.randomization|((pval.compare.smde/test.compare.smde.all)))/sig.comp.smde
+p <- p + plot_annotation(tag_levels = "A") + plot_layout(height=c(2,1))
+p
+
+ggsave2("Figures/fig2.pdf",plot=p,width=14,height = 14)
+
+```
+
+## Based on uniform (random) codon usage
+
+```{r warning = F}
+
+combined.rand <- combineRosenbergOutput("Rosenberg_analysis/dataverse_files/00_results_original_code/00_pointwise_cdist-natcom-kernel-size-2-bootstrap-25-perm-200//pvals/cc-pvals.csv","Rosenberg_analysis/dataverse_files_sim_w_ena_random/00_results_original_code/02_pointwise_cdist-simulated-genes-kernel-size-2-bootstrap-25-perm-200-run-3/pvals/cc-pvals.csv")
+
+combined.rand <- combined.rand %>%
+  separate(subgroup1,into=c("AA1","Codon1"),remove=F) %>%
+  separate(subgroup2,into=c("AA2","Codon2"),remove=F)
+
+
+cor.test(unlist(combined.rand$pval_Real),unlist(combined.rand$pval_Sim),method="spearman")
+cor.test(unlist(combined.rand$ddist_Real),unlist(combined.rand$ddist_Sim),method="spearman")
+single.occ <- combined.rand %>%
+  distinct(condition_group,subgroup1,.keep_all = T)
+cor.test(unlist(single.occ$phi1_mean_Real),unlist(single.occ$phi1_mean_Sim),method="spearman")
+cor.test(unlist(single.occ$psi1_mean_Real),unlist(single.occ$psi1_mean_Sim),method="spearman")
+cor.test(unlist(single.occ$phi2_mean_Real),unlist(single.occ$phi2_mean_Sim),method="spearman")
+cor.test(unlist(single.occ$psi2_mean_Real),unlist(single.occ$psi2_mean_Sim),method="spearman")
+
+all.real <- combined.rand %>% filter(significant_Real == T)
+all.sim <- combined.rand %>% filter(significant_Sim == T)
+only.real <- combined.rand %>% filter(significant_Real == T & significant_Sim == F)
+only.sim <- combined.rand %>% filter(significant_Real == F & significant_Sim == T)
+both <- combined.rand %>% filter(significant_Real == T & significant_Sim == T)
+
+print("Percentage of statistically significant cases")
+print("in simulated data also found in the real data:")
+print(nrow(both)/nrow(all.real))
+
+
+pval.compare.rand <- ggplot(combined.rand,aes(x=pval_Real,y=pval_Sim)) +
+  geom_point() +
+  scale_x_log10() +
+  scale_y_log10() +
+  xlab("p-value\nReal Sequences") +
+  ylab("p-value\nSimulated Sequences") +
+  geom_abline(intercept=0,slope=1,linetype="dashed",color="red") +
+  stat_cor(method="spearman",label.sep="\n") +
+  theme_cowplot() +
+  ggtitle("Comparing p-values:\nUniform Model")
+pval.compare.rand
+
+test.compare.rand <- ggplot(combined.rand,aes(x=ddist_Real,y=ddist_Sim)) +
+  geom_point() +
+  xlab("DDist\nReal Sequences") +
+  ylab("DDist\nSimulated Sequences") +
+  geom_abline(intercept=0,slope=1,linetype="dashed",color="red") +
+  stat_cor(method="spearman",label.sep="\n") +
+  theme_cowplot() +
+  ggtitle("Comparing DDist statistics:\nUniform Model")  +
+  facet_wrap(~condition_group,nrow=4)
+test.compare.rand
+
+test.compare.rand.all <- ggplot(combined.rand,aes(x=ddist_Real,y=ddist_Sim)) +
+  geom_point() +
+  xlab("DDist\nReal Sequences") +
+  ylab("DDist\nSimulated Sequences") +
+  geom_abline(intercept=0,slope=1,linetype="dashed",color="red") +
+  stat_cor(method="spearman",label.sep="\n") +
+  theme_cowplot() +
+  ggtitle("Comparing DDist statistics:\nUniform Model")
+test.compare.rand.all
+
+
+combined.rand.long <- combined.rand %>% 
+  pivot_longer(-c(condition_group,subgroup1,subgroup2,Category),names_to = c(".value", "set"),names_pattern="(.*)_(.*)") %>%
+  mutate(sig=case_when(
+    set == "Sim"~"Simulated",
+    set == "Real" ~ "Real"
+  )) 
+
+sig.comp.rand <- ggplot(combined.rand.long,aes(x=Category,y=pval,fill=set)) +
   geom_boxplot(notch=T) +
   xlab("") +
   ylab("p-value") +
   theme_cowplot() +
-  labs(fill="Sequences") +
-  ggtitle("Comparing p-value distributions")
+  labs(fill="Sequences") + scale_y_log10() +
+  xlab("Significant") +
+  ggtitle("Comparing p-value distributions:\nUniform Model")
+
+sig.comp.rand
+
+
+
+```
+
+```{r}
+
+p <- (pval.compare.rand | test.compare.rand.all) / sig.comp.rand
+p <- p + plot_annotation(tag_levels = "A") + plot_layout(height=c(2,1))
+p
+
+ggsave2("Figures/figS4.pdf",plot=p,width=9,height = 9)
 
 
 
 
 ```
-# Generate figure 1 for publication
+## Based on mutation bias alone
 
-Below is the final figure to be include in the Matters Arising manuscript. 
+This section presents analyses applied to data simulated using ROC-SEMPPR and empirical estimates of mutation bias. Generally, these approaches 
 
-```{r fig.width=14,fig.height=14}
-library(patchwork)
+### ROC estimates
 
-p <- ((emp.vs.roc/compare.counts)|randomization|((pval.compare/test.compare)))/sig.comp + scale_y_log10() + xlab("Significant")
+```{r warning = F}
+combined.mut.roc <- combineRosenbergOutput("Rosenberg_analysis/dataverse_files/00_results_original_code/00_pointwise_cdist-natcom-kernel-size-2-bootstrap-25-perm-200/pvals/cc-pvals.csv","Rosenberg_analysis/dataverse_files_sim_w_ena_roc_mutation_bias_only/00_results_original_code/00_pointwise_cdist-simulated-genes-kernel-size-2-bootstrap-25-perm-200/pvals/cc-pvals.csv")
+
+combined.mut.roc <- combined.mut.roc %>%
+  separate(subgroup1,into=c("AA1","Codon1"),remove=F) %>%
+  separate(subgroup2,into=c("AA2","Codon2"),remove=F)
+
+
+cor.test(unlist(combined.mut.roc$pval_Real),unlist(combined.mut.roc$pval_Sim),method="spearman")
+cor.test(unlist(combined.mut.roc$ddist_Real),unlist(combined.mut.roc$ddist_Sim),method="spearman")
+
+cor.test(unlist(single.occ$phi1_mean_Real),unlist(single.occ$phi1_mean_Sim),method="spearman")
+cor.test(unlist(single.occ$psi1_mean_Real),unlist(single.occ$psi1_mean_Sim),method="spearman")
+cor.test(unlist(single.occ$phi2_mean_Real),unlist(single.occ$phi2_mean_Sim),method="spearman")
+cor.test(unlist(single.occ$psi2_mean_Real),unlist(single.occ$psi2_mean_Sim),method="spearman")
+
+all.real <- combined.mut.roc %>% filter(significant_Real == T)
+all.sim <- combined.mut.roc %>% filter(significant_Sim== T)
+only.real <- combined.mut.roc %>% filter(significant_Real == T & significant_Sim == F)
+only.sim <- combined.mut.roc %>% filter(significant_Real == F & significant_Sim == T)
+both <- combined.mut.roc %>% filter(significant_Real == T & significant_Sim == T)
+
+print("Percentage of statistically significant cases")
+print("in simulated data also found in the real data:")
+print(nrow(both)/nrow(all.real))
+
+
+pval.compare.mut.roc <- ggplot(combined.mut.roc,aes(x=pval_Real,y=pval_Sim)) +
+  geom_point() +
+  scale_x_log10() +
+  scale_y_log10() +
+  xlab("p-value\nReal Sequences") +
+  ylab("p-value\nSimulated Sequences") +
+  geom_abline(intercept=0,slope=1,linetype="dashed",color="red") +
+  stat_cor(method="spearman",label.sep="\n") +
+  theme_cowplot() +
+  ggtitle("Comparing p-values:\nMutation-ROC Model") 
+pval.compare.mut.roc
+
+
+test.compare.mut.roc.all <- ggplot(combined.mut.roc,aes(x=ddist_Real,y=ddist_Sim)) +
+  geom_point() +
+  xlab("DDist\nReal Sequences") +
+  ylab("DDist\nSimulated Sequences") +
+  geom_abline(intercept=0,slope=1,linetype="dashed",color="red") +
+  stat_cor(method="spearman",label.sep="\n") +
+  theme_cowplot() +
+  ggtitle("Comparing DDist statistics:\nMutation-ROC Model")
+test.compare.mut.roc.all
+
+
+
+test.compare.mut.roc <- ggplot(combined.mut.roc,aes(x=ddist_Real,y=ddist_Sim)) +
+  geom_point() +
+  xlab("DDist\nReal Sequences") +
+  ylab("DDist\nSimulated Sequences") +
+  geom_abline(intercept=0,slope=1,linetype="dashed",color="red") +
+  stat_cor(method="spearman",label.sep="\n") +
+  theme_cowplot() +
+  ggtitle("Comparing DDist statistics:\nMutation-ROC Model")  +
+  facet_wrap(~condition_group,nrow=4)
+test.compare.mut.roc
+
+
+
+
+combined.mut.roc.long <- combined.mut.roc %>% 
+  pivot_longer(-c(condition_group,subgroup1,subgroup2,Category),names_to = c(".value", "set"),names_pattern="(.*)_(.*)") %>%
+  mutate(sig=case_when(
+    set == "Sim"~"Simulated",
+    set == "Real" ~ "Real"
+  )) 
+
+sig.comp.mut.roc <- ggplot(combined.mut.roc.long,aes(x=Category,y=pval,fill=set)) +
+  geom_boxplot(notch=T) +
+  xlab("") +
+  ylab("p-value") +
+  theme_cowplot() +
+  labs(fill="Sequences") +
+  scale_y_log10() +
+  xlab("Significant") +
+  ggtitle("Comparing p-value distributions\nMutation-ROC")
+
+sig.comp.mut.roc
+
+```
+
+```{r}
+
+p <- (pval.compare.mut.roc| test.compare.mut.roc.all) / sig.comp.mut.roc
 p <- p + plot_annotation(tag_levels = "A") + plot_layout(height=c(2,1))
 p
 
-#ggsave2("fig1_for_mbe.pdf",plot=p,width=14,height = 14)
+ggsave2("Figures/figS5.pdf",plot=p,width=9,height = 9)
+
+```
+
+
+### Empirical estimates
+
+```{r warning = F}
+combined.mut.emp <- combineRosenbergOutput("Rosenberg_analysis/dataverse_files/00_results_original_code/00_pointwise_cdist-natcom-kernel-size-2-bootstrap-25-perm-200/pvals/cc-pvals.csv","Rosenberg_analysis/dataverse_files_sim_w_ena_empirical_mutation_bias_only/00_results_original_code/00_pointwise_cdist-simulated-genes-kernel-size-2-bootstrap-25-perm-200/pvals/cc-pvals.csv")
+
+combined.mut.emp <- combined.mut.emp %>%
+  separate(subgroup1,into=c("AA1","Codon1"),remove=F) %>%
+  separate(subgroup2,into=c("AA2","Codon2"),remove=F)
+
+
+cor.test(unlist(combined.mut.emp$pval_Real),unlist(combined.mut.emp$pval_Sim),method="spearman")
+cor.test(unlist(combined.mut.emp$ddist_Real),unlist(combined.mut.emp$ddist_Sim),method="spearman")
+
+cor.test(unlist(single.occ$phi1_mean_Real),unlist(single.occ$phi1_mean_Sim),method="spearman")
+cor.test(unlist(single.occ$psi1_mean_Real),unlist(single.occ$psi1_mean_Sim),method="spearman")
+cor.test(unlist(single.occ$phi2_mean_Real),unlist(single.occ$phi2_mean_Sim),method="spearman")
+cor.test(unlist(single.occ$psi2_mean_Real),unlist(single.occ$psi2_mean_Sim),method="spearman")
+
+all.real <- combined.mut.emp %>% filter(significant_Real == T)
+all.sim <- combined.mut.emp %>% filter(significant_Sim== T)
+only.real <- combined.mut.emp %>% filter(significant_Real == T & significant_Sim == F)
+only.sim <- combined.mut.emp %>% filter(significant_Real == F & significant_Sim == T)
+both <- combined.mut.emp %>% filter(significant_Real == T & significant_Sim == T)
+
+print("Percentage of statistically significant cases")
+print("in simulated data also found in the real data:")
+print(nrow(both)/nrow(all.real))
+
+
+pval.compare.mut.emp <- ggplot(combined.mut.emp,aes(x=pval_Real,y=pval_Sim)) +
+  geom_point() +
+  scale_x_log10() +
+  scale_y_log10() +
+  xlab("p-value\nReal Sequences") +
+  ylab("p-value\nSimulated Sequences") +
+  geom_abline(intercept=0,slope=1,linetype="dashed",color="red") +
+  stat_cor(method="spearman",label.sep="\n") +
+  theme_cowplot() +
+  ggtitle("Comparing p-values:\nMutation-Empirical model") 
+pval.compare
+
+
+test.compare.mut.emp.all <- ggplot(combined.mut.emp,aes(x=ddist_Real,y=ddist_Sim)) +
+  geom_point() +
+  xlab("DDist\nReal Sequences") +
+  ylab("DDist\nSimulated Sequences") +
+  geom_abline(intercept=0,slope=1,linetype="dashed",color="red") +
+  stat_cor(method="spearman",label.sep="\n") +
+  theme_cowplot() +
+  ggtitle("Comparing DDist statistics:\nMutation-Empirical model") 
+test.compare.mut.emp.all
+
+
+test.compare.mut.emp <- ggplot(combined.mut.emp,aes(x=ddist_Real,y=ddist_Sim)) +
+  geom_point() +
+  xlab("DDist\nReal Sequences") +
+  ylab("DDist\nSimulated Sequences") +
+  geom_abline(intercept=0,slope=1,linetype="dashed",color="red") +
+  stat_cor(method="spearman",label.sep="\n") +
+  theme_cowplot() +
+  ggtitle("Comparing DDist statistics:\nMutation-Empirical model")  +
+  facet_wrap(~condition_group,nrow=4)
+test.compare.mut.emp
+
+
+test.compare <- ggplot(combined.mut.emp,aes(x=ddist_Real,y=ddist_Sim)) +
+  geom_point() +
+  xlab("DDist\nReal Sequences") +
+  ylab("DDist\nSimulated Sequences") +
+  geom_abline(intercept=0,slope=1,linetype="dashed",color="red") +
+  stat_cor(method="spearman",show.legend = F) +
+  labs(color="AA") +
+  theme_cowplot() +
+  ggtitle("Comparing DDist statistics")
+test.compare
+
+combined.mut.emp.long <- combined.mut.emp %>% 
+  pivot_longer(-c(condition_group,subgroup1,subgroup2,Category),names_to = c(".value", "set"),names_pattern="(.*)_(.*)") %>%
+  mutate(sig=case_when(
+    set == "Sim"~"Simulated",
+    set == "Real" ~ "Real"
+  )) 
+
+sig.comp.mut.emp <- ggplot(combined.mut.emp.long,aes(x=Category,y=pval,fill=set)) +
+  geom_boxplot(notch=T) +
+  xlab("") +
+  ylab("p-value") +
+  theme_cowplot() +
+  labs(fill="Sequences") +
+  scale_y_log10() +
+  xlab("Significant") +
+  ggtitle("Comparing p-value distributions:\nMutation-Empirical Model")
+
+sig.comp.mut.emp
+
+```
+
+
+```{r}
+
+p <- (pval.compare.mut.emp| test.compare.mut.emp.all) / sig.comp.mut.emp
+p <- p + plot_annotation(tag_levels = "A") + plot_layout(height=c(2,1))
+p
+
+ggsave2("Figures/figS6.pdf",plot=p,width=9,height = 9)
+
+```
+
+### Examining the impact of variation in test statistics across secondary structure categories
+
+```{r fig.height=7,fig.width=6}
+
+p <- (test.compare.rand | test.compare.mut.emp |test.compare.mut.roc | test.compare.smde)
+p
+
+ggsave2("Figures/figS7.pdf",p,height=12,width=15)
 
 ```
 
@@ -363,26 +795,28 @@ p
 # Assessing the impact of noise in protein bond angles in real and simulated data
 
 ```{r fig.width=5}
-library(ggrepel)
+
+real <- read_csv("Rosenberg_analysis/dataverse_files/00_results_original_code/00_pointwise_cdist-natcom-kernel-size-2-bootstrap-25-perm-200/pvals/cc-pvals.csv",col_types = cols())
+
 same.codon.real <- real %>%
   separate(subgroup1,into = c("AA1","Codon1"),remove = F) %>%
   separate(subgroup2,into = c("AA2","Codon2"),remove = F) %>%
   filter(subgroup1 == subgroup2) %>%
   group_by(condition_group,AA1) %>%
-  summarize(Median.Same = mean(ddist,na.rm=T),
+  summarize(Mean.Same = mean(ddist,na.rm=T),
             Total.AA = sum(n1))
 diff.codon.real <- real %>% 
   separate(subgroup1,into = c("AA1","Codon1"),remove = F) %>%
   separate(subgroup2,into = c("AA2","Codon2"),remove = F) %>%
   filter(subgroup1 != subgroup2) %>% 
   group_by(condition_group,AA1) %>% 
-  summarize(Median.Diff = mean(ddist,na.rm=T))
+  summarize(Mean.Diff = mean(ddist,na.rm=T))
 
 
 all.codon <- same.codon.real %>% 
   left_join(diff.codon.real)
 
-p <- ggplot(all.codon,aes(x=Median.Same,y=Median.Diff,label=AA1)) +
+p <- ggplot(all.codon,aes(x=Mean.Same,y=Mean.Diff,label=AA1)) +
   geom_point() +
   geom_text_repel()+
   xlab("Mean DDist\nCodon vs. Itself, Same Amino Acid") +
@@ -390,33 +824,37 @@ p <- ggplot(all.codon,aes(x=Median.Same,y=Median.Diff,label=AA1)) +
   stat_cor(method="spearman",label.sep = "\n") +
   facet_wrap(~condition_group) +
   theme_cowplot() +
+  geom_abline(intercept=0,slope=1,linetype="dashed")+
   ggtitle("Comparing mean bond angles distances of\ncodons compared to itself vs. synonyms")
 p
 
-ggsave2("fig_3_for_mbe.pdf",plot=p,width=7,height=7)
+ggsave2("Figures/fig1.pdf",plot=p,width=7,height=7)
 
 ```
+
+
+
 ```{r fig.width=5}
-sim.roc <- read_csv("/data2/cope/proteins-1.0.0-natcom/dataverse_files_sim_w_ena//results/pointwise_cdist-simulated/pvals/cc-pvals.csv",col_types = cols())
+sim.roc <- read_csv("Rosenberg_analysis/dataverse_files_sim_w_ena_smde/00_results_original_code/00_pointwise_cdist-simulated-genes-kernel-size-2-bootstrap-25-perm-200/pvals/cc-pvals.csv",col_types = cols())
 
 same.codon.sim <- sim.roc %>% 
   separate(subgroup1,into = c("AA1","Codon1"),remove = F) %>%
   separate(subgroup2,into = c("AA2","Codon2"),remove = F) %>%
   filter(subgroup1 == subgroup2) %>% 
   group_by(condition_group,AA1) %>% 
-  summarize(Median.Same = mean(ddist,na.rm=T)) 
+  summarize(Mean.Same = mean(ddist,na.rm=T)) 
 diff.codon.sim <- sim.roc %>% 
   separate(subgroup1,into = c("AA1","Codon1"),remove = F) %>%
   separate(subgroup2,into = c("AA2","Codon2"),remove = F) %>%
   filter(subgroup1 != subgroup2) %>% 
   group_by(condition_group,AA1) %>% 
-  summarize(Median.Diff = mean(ddist,na.rm=T))
+  summarize(Mean.Diff = mean(ddist,na.rm=T))
 
 
 all.codon <- same.codon.sim %>% 
   left_join(diff.codon.sim,by=c("condition_group","AA1"))
 
-p <- ggplot(all.codon,aes(x=Median.Same,y=Median.Diff,label=AA1)) +
+p <- ggplot(all.codon,aes(x=Mean.Same,y=Mean.Diff,label=AA1)) +
   geom_point() +
   geom_text_repel()+
   xlab("Mean DDist\nCodon vs. itself, Same Amino Acid") +
@@ -424,52 +862,36 @@ p <- ggplot(all.codon,aes(x=Median.Same,y=Median.Diff,label=AA1)) +
   stat_cor(method="spearman",label.sep = "\n") +
   facet_wrap(~condition_group) +
   theme_cowplot() +
-  ggtitle("Comparing mean bond angles distances of\ncodons compared to itself vs. synonyms:\nSimulated protein-coding sequences")
+  ggtitle("Comparing mean bond angles distances of\ncodons compared to itself vs. synonyms:\nSimulated protein-coding sequences") +
+  geom_abline(intercept=0,slope=1,linetype="dashed")
 p
 
-
 ```
+
+
+
 
 ```{r}
-all.codon <- same.codon.real %>% 
-  left_join(same.codon.sim,by=c("condition_group","AA1"))
-
-
-p <- ggplot(all.codon,aes(x=Median.Same.x,y=Median.Same.y,label=AA1)) +
-  geom_point() +
-  geom_text_repel()+
-  xlab("Mean DDist\nCodon vs. Itself (Real), Same Amino Acid") +
-  ylab("Mean DDist\nCodon vs. Itself (ROC Sim), Same Amino Acid") +
-  stat_cor(method="spearman",label.sep = "\n") +
-  geom_abline(intercept=0,slope=1,linetype="dashed") +
-  facet_wrap(~condition_group) +
-  theme_cowplot() +
-  ggtitle("Comparing mean bond angles distances of\ncodons compared to itself:\nReal vs ROC simulated protein-coding sequences")
-p
-
-```
-
-```{r fig.width=5}
-sim.random <- read_csv("/data2/cope/proteins-1.0.0-natcom/dataverse_files_sim_w_ena_random//results/pointwise_cdist-simulated-3/pvals/cc-pvals.csv",col_types = cols())
+sim.random <- read_csv("Rosenberg_analysis/dataverse_files_sim_w_ena_random/00_results_original_code/02_pointwise_cdist-simulated-genes-kernel-size-2-bootstrap-25-perm-200-run-3/pvals/cc-pvals.csv",col_types = cols())
 
 same.codon.sim <- sim.random %>% 
   separate(subgroup1,into = c("AA1","Codon1"),remove = F) %>%
   separate(subgroup2,into = c("AA2","Codon2"),remove = F) %>%
   filter(subgroup1 == subgroup2) %>% 
   group_by(condition_group,AA1) %>% 
-  summarize(Median.Same = mean(ddist,na.rm=T)) 
+  summarize(Mean.Same = mean(ddist,na.rm=T)) 
 diff.codon.sim <- sim.random %>% 
   separate(subgroup1,into = c("AA1","Codon1"),remove = F) %>%
   separate(subgroup2,into = c("AA2","Codon2"),remove = F) %>%
   filter(subgroup1 != subgroup2) %>% 
   group_by(condition_group,AA1) %>% 
-  summarize(Median.Diff = mean(ddist,na.rm=T))
+  summarize(Mean.Diff = mean(ddist,na.rm=T))
 
 
 all.codon <- same.codon.sim %>% 
   left_join(diff.codon.sim,by=c("condition_group","AA1"))
 
-p <- ggplot(all.codon,aes(x=Median.Same,y=Median.Diff,label=AA1)) +
+p <- ggplot(all.codon,aes(x=Mean.Same,y=Mean.Diff,label=AA1)) +
   geom_point() +
   geom_text_repel()+
   xlab("Mean DDist\nCodon vs. itself, Same Amino Acid") +
@@ -477,100 +899,16 @@ p <- ggplot(all.codon,aes(x=Median.Same,y=Median.Diff,label=AA1)) +
   stat_cor(method="spearman",label.sep = "\n") +
   facet_wrap(~condition_group) +
   theme_cowplot() +
-  ggtitle("Comparing mean bond angles distances of\ncodons compared to itself vs. synonyms:\nSimulated protein-coding sequences")
+  ggtitle("Comparing mean bond angles distances of\ncodons compared to itself vs. synonyms:\nSimulated protein-coding sequences") +
+  geom_abline(intercept=0,slope=1,linetype="dashed")
 p
-ggsave2("figS1_for_mbe.pdf",plot=p,width=7,height=7)
+ggsave2("Figures/figS1.pdf",plot=p,width=7,height=7)
 ```
 
 
 
 
 
-```{r}
-real <- read_csv("/data2/cope/Codon_usage_prot_structure_angles/Rosenberg_analysis/dataverse_files/results/pointwise_cdist-natcom/pvals/cc-pvals.csv",col_types = cols())
-sim <- read_csv("/data2/cope/proteins-1.0.0-natcom/dataverse_files_sim_w_ena_random//results/pointwise_cdist-simulated-3/pvals/cc-pvals.csv",col_types = cols())
-
-combined <- real %>% 
-  left_join(sim,by=c("condition_group","subgroup1","subgroup2"),suffix=c("_Real","_Sim")) #%>%
-  #filter(condition_group %in% c("HELIX","SHEET"))
-
-cor.test(unlist(combined$pval_Real),unlist(combined$pval_Sim),method="spearman")
-cor.test(unlist(combined$ddist_Real),unlist(combined$ddist_Sim),method="spearman")
-single.occ <- combined %>%
-  distinct(condition_group,subgroup1,.keep_all = T)
-cor.test(unlist(single.occ$phi1_mean_Real),unlist(single.occ$phi1_mean_Sim),method="spearman")
-cor.test(unlist(single.occ$psi1_mean_Real),unlist(single.occ$psi1_mean_Sim),method="spearman")
-cor.test(unlist(single.occ$phi2_mean_Real),unlist(single.occ$phi2_mean_Sim),method="spearman")
-cor.test(unlist(single.occ$psi2_mean_Real),unlist(single.occ$psi2_mean_Sim),method="spearman")
-
-all.real <- combined %>% filter(significant_Real == T)
-only.real <- combined %>% filter(significant_Real == T & significant_Sim == F)
-only.sim <- combined %>% filter(significant_Real == F & significant_Sim == T)
-both <- combined %>% filter(significant_Real == T & significant_Sim == T)
-
-print("Percentage of statistically significant cases")
-print("in simulated data also found in the real data:")
-print(nrow(both)/nrow(all.real))
-
-combined <- combined %>% mutate(Category = case_when(
-  significant_Real == T & significant_Sim == T ~ "Both",
-  significant_Real == F & significant_Sim == T ~ "Only Simulated",
-  significant_Real == T & significant_Sim == F ~ "Only Real",
-  significant_Real == F & significant_Sim == F ~ "Neither",
-)) %>% filter(!is.na(Category))
-
-pval.compare <- ggplot(combined,aes(x=pval_Real,y=pval_Sim)) +
-  geom_point() +
-  scale_x_log10() +
-  scale_y_log10() +
-  xlab("p-value\nReal Sequences") +
-  ylab("p-value\nSimulated Sequences") +
-  geom_abline(intercept=0,slope=1,linetype="dashed",color="red") +
-  stat_cor(method="spearman",label.sep="\n") +
-  theme_cowplot() +
-  ggtitle("Comparing p-values")
-
-test.compare <- ggplot(combined,aes(x=d12_Real,y=d12_Sim)) +
-  geom_point() +
-  xlab("D12\nReal Sequences") +
-  ylab("D12\nSimulated Sequences") +
-  geom_abline(intercept=0,slope=1,linetype="dashed",color="red") +
-  stat_cor(method="spearman",label.sep="\n") +
-  theme_cowplot() +
-  scale_x_log10() +
-  scale_y_log10() +
-  ggtitle("Comparing D12")
-
-test.compare <- ggplot(combined,aes(x=ddist_Real,y=ddist_Sim)) +
-  geom_point() +
-  xlab("DDist\nReal Sequences") +
-  ylab("DDist\nSimulated Sequences") +
-  geom_abline(intercept=0,slope=1,linetype="dashed",color="red") +
-  stat_cor(method="spearman",label.sep="\n") +
-  theme_cowplot() +
-  ggtitle("Comparing DDist statistics")
-
-
-combined.long <- combined %>% 
-  pivot_longer(-c(condition_group,subgroup1,subgroup2,Category),names_to = c(".value", "set"),names_pattern="(.*)_(.*)") %>%
-  mutate(sig=case_when(
-    set == "Sim"~"Simulated",
-    set == "Real" ~ "Real"
-  )) 
-
-sig.comp <- ggplot(combined.long,aes(x=Category,y=pval,fill=set)) +
-  geom_boxplot(notch=T) +
-  xlab("") +
-  ylab("p-value") +
-  theme_cowplot() +
-  labs(fill="Sequences") +
-  ggtitle("Comparing p-value distributions")
-
-
-
-
-
-```
 
 
 # Determining possible correlates with gene expression
@@ -590,7 +928,7 @@ roc.phi <- roc.phi %>%
   left_join(length.df,by="GeneID")
 
 genome.df <- read_csv("Rosenberg_analysis/dataverse_files/data-precs.csv")
-#genome.df <- read_csv("../proteins-1.0.0-natcom/dataverse_files_real_ata_high_vs_low_control/data-precs.csv")
+
 
 order.sum <- genome.df %>% 
   distinct(unp_id,unp_idx,secondary) %>% 
@@ -599,12 +937,12 @@ order.sum <- genome.df %>%
   dplyr::summarize(Freq = sum(order)/n())
 
 
-id.map <- read_tsv("/data2/cope/Codon_usage_prot_structure_angles/ecoli_id_map.tsv",col_types = cols()) %>% 
+id.map <- read_tsv("ecoli_id_map.tsv",col_types = cols()) %>% 
   dplyr::select(Locus,uniprot_id) %>%
   dplyr::rename(unp_id=uniprot_id) %>%
   distinct(Locus,unp_id)
 
-una.ena <- read_csv("/data2/cope/Codon_usage_prot_structure_angles/Rosenberg_analysis/dataverse_files/meta-structs_filtered.csv",col_types = cols()) %>% 
+una.ena <- read_csv("Rosenberg_analysis/dataverse_files/meta-structs_filtered.csv",col_types = cols()) %>% 
   left_join(id.map) %>%
   left_join(roc.phi,by=c("Locus"="GeneID")) %>%
   left_join(roc.phi,by=c("ena_id"="GeneID")) %>%
@@ -627,11 +965,11 @@ total.struct.length <- genome.df %>%
   summarize(Structure.Length=n())
 
 genome.df.sum.aa <- genome.df %>%
-  filter(name != "X" & secondary != "-") %>%
-  # mutate(secondary = case_when(
-  #   secondary == "B" | secondary == "G" | secondary == "I" | secondary == "S" ~ "Other",
-  #   TRUE ~ secondary
-  # )) %>%
+  filter(name != "X" & secondary != "-" & codon_score == 1) %>%
+  mutate(secondary = case_when(
+    secondary == "B" | secondary == "G" | secondary == "I" | secondary == "S" ~ "Other",
+    TRUE ~ secondary
+  )) %>%
   filter(secondary != "-") %>% 
   left_join(total.struct.length) %>%
   group_by(pdb_id,unp_id,name) %>%
@@ -649,15 +987,9 @@ fit<-ca(genome.df.sum.aa.wide[,5:ncol(genome.df.sum.aa.wide)])
 
 plot(fit,dim=c(2,3))
 plot(fit,dim=c(2,4))
-
 cor.test(log10(genome.df.sum.aa.wide$Phi),fit$rowcoord[,2],method="spearman")
 cor.test(log10(genome.df.sum.aa.wide$Phi),fit$rowcoord[,3],method="spearman")
 cor.test(log10(genome.df.sum.aa.wide$Phi),fit$rowcoord[,4],method="spearman")
-
-
-
-
-
 
 
 
@@ -693,11 +1025,366 @@ ss.freq.per.gene <- ggplot(genome.df.sum.ss,aes(x=Phi,y=SS.Freq)) +
   facet_wrap(~secondary) 
 ss.freq.per.gene
 
-ggsave2("fig2_for_mbe.pdf",plot=ss.freq.per.gene)
+ggsave2("Figures/figS8.pdf",plot=ss.freq.per.gene)
 
 
 ```
 
+
+## Replying to Rosenberg et al. rebuttal - using original code
+
+In their rebuttal, Rosenberg et al. provided updated parameters for the kernel density approach that appeared to resolve some of the noise issue. They showed that by using these new parameters, synonymous codon pairs with low p-values in the real sequences had high p-values in the simulated sequences. The analysis presented in the rebuttal was based on the "ANY" category, which compares synonymous codons without conditioning on secondary structure. We repeat some of their analyses here.
+
+### With DDIST_KERNEL_SIZE = 10
+
+This is the kernel width specified in the rebuttal.
+
+```{r fig.width=7}
+real <- read_csv("Rosenberg_analysis/dataverse_files/00_results_original_code/01_pointwise_cdist-real-genes-kernel-size-10-bootstrap-1-perm-5000-w-any-run-1/pvals/cc-pvals.csv",col_types = cols())
+sim.roc <- read_csv("Rosenberg_analysis/dataverse_files_sim_w_ena_smde/00_results_original_code/01_pointwise_cdist-simulated-genes-kernel-size-10-bootstrap-1-perm-5000-w-any/pvals/cc-pvals.csv",col_types = cols())
+
+compare.results <- real %>% 
+  left_join(sim.roc,by=c("condition_group","subgroup1","subgroup2"),suffix=c("_Real","_Sim"))
+
+compare.results.long <- compare.results %>%
+  pivot_longer(c(pval_Real,pval_Sim),names_to="Data",values_to="pval")
+
+
+pval.cdf <- ggplot(compare.results.long %>% filter(condition_group == "ANY"),aes(pval,color=Data)) + 
+  stat_ecdf() +
+  theme_cowplot() +
+  ggtitle("Cumulative distribution functions:\nReal vs. Simulated") +
+  geom_segment(x=0,y=0,xend=1,yend=1,color="black",linetype="dashed")
+pval.cdf
+
+compare.results.filt <- compare.results %>%
+  group_by(condition_group) %>%
+  filter((pval_Real < quantile(pval_Real,0.1)))
+
+compare.results.filt.long <- compare.results.filt %>%
+  pivot_longer(c(pval_Real,pval_Sim),names_to="Data",values_to="pval")
+
+
+
+p1 <- ggplot(compare.results.filt.long,aes(x=condition_group,y=pval,color=Data)) +
+  geom_boxplot() +
+  scale_y_log10() +
+  theme_cowplot() +
+  ggtitle("Lowest 10% of p-values on real")
+  
+p1
+
+compare.results.filt <- compare.results %>%
+  group_by(condition_group) %>%
+  filter((pval_Sim < quantile(pval_Sim,0.1)))
+
+compare.results.filt.long <- compare.results.filt %>%
+  pivot_longer(c(pval_Real,pval_Sim),names_to="Data",values_to="pval")
+
+
+p2 <- ggplot(compare.results.filt.long,aes(x=condition_group,y=pval,color=Data)) +
+  geom_boxplot() +
+  scale_y_log10() +
+  theme_cowplot() +
+  ggtitle("Lowest 10% of p-values on simulated")
+  
+p2
+
+total <- (pval.cdf | p1 | p2) + plot_annotation(tag_levels = "A") + plot_layout(guides = "collect")
+
+ggsave2("Figures/Rebuttal/real_vs_sim_pval_10_kernel_width_original_code.pdf",total,width=15,height=5)
+
+
+```
+
+
+
+### Allowing for variation in codon usage based on secondary structure
+
+Importantly, our simulations using the SMDE framework assumed codon usage was constant across genes, i.e. there would be no variation related to factors such as weakers selection on codon usage at the 5'-termini or differences across protein secondary structures. Here, we assess the impact of allowing for variation in selection on codon usage across secondary structures. In doing so, we observe that the p-value distribution of the ANY category for the simulated data more closely resemble the real data. 
+
+```{r fig.width=7}
+real <- read_csv("Rosenberg_analysis/dataverse_files_remove_possible_exogenous/00_results_original_code/pointwise_cdist-natcom-kernel-size-10-bootstrap-1-perm-5000-w-any/pvals/cc-pvals.csv",col_types = cols())
+sim.roc <- read_csv("Rosenberg_analysis/dataverse_files_sim_w_ena_remove_possible_exogenous_different_cub_across_structures/00_results_original_code/pointwise_cdist-real-genes-kernel-size-10-bootstrap-1-perm-5000-w-any/pvals/cc-pvals.csv",col_types = cols())
+
+
+
+compare.results <- real %>% 
+  left_join(sim.roc,by=c("condition_group","subgroup1","subgroup2"),suffix=c("_Real","_Sim"))
+
+compare.results.long <- compare.results %>%
+  pivot_longer(c(pval_Real,pval_Sim),names_to="Data",values_to="pval")
+
+
+pval.cdf <- ggplot(compare.results.long %>% filter(condition_group == "ANY"),aes(pval,color=Data)) + 
+  stat_ecdf() +
+  theme_cowplot() +
+  ggtitle("Cumulative distribution functions:\nReal vs. Simulated") +
+  geom_segment(x=0,y=0,xend=1,yend=1,color="black",linetype="dashed")
+pval.cdf
+
+compare.results.filt <- compare.results %>%
+  group_by(condition_group) %>%
+  filter((pval_Real < quantile(pval_Real,0.1)))
+
+compare.results.filt.long <- compare.results.filt %>%
+  pivot_longer(c(pval_Real,pval_Sim),names_to="Data",values_to="pval")
+
+
+
+p1 <- ggplot(compare.results.filt.long,aes(x=condition_group,y=pval,color=Data)) +
+  geom_boxplot() +
+  scale_y_log10() +
+  theme_cowplot() +
+  ggtitle("Lowest 10% of p-values on real")
+  
+p1
+
+compare.results.filt <- compare.results %>%
+  group_by(condition_group) %>%
+  filter((pval_Sim < quantile(pval_Sim,0.1)))
+
+compare.results.filt.long <- compare.results.filt %>%
+  pivot_longer(c(pval_Real,pval_Sim),names_to="Data",values_to="pval")
+
+
+p2 <- ggplot(compare.results.filt.long,aes(x=condition_group,y=pval,color=Data)) +
+  geom_boxplot() +
+  scale_y_log10() +
+  theme_cowplot() +
+  ggtitle("Lowest 10% of p-values on simulated")
+  
+p2
+
+total <- (pval.cdf | p1 | p2) + plot_annotation(tag_levels = "A") + plot_layout(guides = "collect")
+
+ggsave2("Figures/Rebuttal/real_vs_sim_codon_usage_diff_secondary_structure_pval_10_kernel_width_original_code.pdf",total,width=15,height=5)
+
+```
+
+
+
+
+### Variability across runs when using real protein-coding sequences
+
+We re-analyzed the dihedral bond angle distributions based off of the real protein-coding sequences multiple times. We found that which synonymous codon pairs that fell into the lowest 10\% of p-values of one analysis were generally inconsistent across runs. This suggests that the updated setting will not provide consistent results from run to run.
+
+```{r fig.width=7}
+
+
+real.1 <- read_csv("Rosenberg_analysis/dataverse_files/00_results_original_code/01_pointwise_cdist-real-genes-kernel-size-10-bootstrap-1-perm-5000-w-any-run-1/pvals/cc-pvals.csv",col_types = cols())
+real.2 <- read_csv("Rosenberg_analysis/dataverse_files/00_results_original_code/02_pointwise_cdist-real-genes-kernel-size-10-bootstrap-1-perm-5000-w-any-run-2/pvals/cc-pvals.csv",col_types = cols())
+real.3 <- read_csv("Rosenberg_analysis/dataverse_files/00_results_original_code/03_pointwise_cdist-real-genes-kernel-size-10-bootstrap-1-perm-5000-w-any-run-3/pvals/cc-pvals.csv",col_types = cols())
+
+
+compare.results <- real.1 %>% 
+  left_join(real.2,by=c("condition_group","subgroup1","subgroup2"),suffix=c("_1","_2"))
+compare.results <- compare.results  %>% 
+  left_join(real.3,by=c("condition_group","subgroup1","subgroup2")) %>%
+  dplyr::rename(pval_3 = pval)
+
+compare.results.filt <- compare.results %>%
+  group_by(condition_group) %>%
+  filter((pval_1 < quantile(pval_1,0.1)))
+
+compare.results.long <- compare.results.filt %>%
+  pivot_longer(c(pval_1,pval_2,pval_3),names_to="Data",values_to="pval")
+
+
+
+p1 <- ggplot(compare.results.long,aes(x=condition_group,y=pval,color=Data)) +
+  geom_boxplot(notch=F) +
+  scale_y_log10() +
+  theme_cowplot() +
+  theme(aspect.ratio=1) + 
+  ggtitle("Lowest 10% of p-values on run 1")
+  
+p1
+
+ggsave2("Figures/Rebuttal/comparing_result_across_runs_real_data.pdf",p1)
+
+
+```
+
+
+
+
+
+
+## Replying to Rosenberg et al. rebuttal - using updated code
+
+Aviv Rosenberg kindly provided an updated version of their software. We repeated the analyses above using this updated code. The kernel size used in this code was 16.0, not 10.0 as specified in the rebuttal. We went with 10.0. Interestingly, this version of the code seems to return more statistically significiant codon pairs.  
+
+### With DDIST_KERNEL_SIZE = 10
+
+
+
+```{r fig.width=7}
+real <- read_csv("Rosenberg_analysis/dataverse_files/01_results_updated_code/00_pointwise_cdist-real-genes-kernel-size-10-bootstrap-1-perm-5000-w-any-run-1/pvals/cc-pvals.csv",col_types = cols())
+sim.roc <- read_csv("Rosenberg_analysis/dataverse_files_sim_w_ena_smde/01_results_updated_code/00_pointwise_cdist-simulated-genes-kernel-size-10-bootstrap-1-perm-5000-w-any/pvals/cc-pvals.csv",col_types = cols())
+
+compare.results <- real %>% 
+  left_join(sim.roc,by=c("condition_group","subgroup1","subgroup2"),suffix=c("_Real","_Sim"))
+
+compare.results.long <- compare.results %>%
+  pivot_longer(c(pval_Real,pval_Sim),names_to="Data",values_to="pval")
+
+
+pval.cdf <- ggplot(compare.results.long %>% filter(condition_group == "ANY"),aes(pval,color=Data)) + 
+  stat_ecdf() +
+  theme_cowplot() +
+  ggtitle("Cumulative distribution functions:\nReal vs. Simulated") +
+  geom_segment(x=0,y=0,xend=1,yend=1,color="black",linetype="dashed")
+pval.cdf
+
+compare.results.filt <- compare.results %>%
+  group_by(condition_group) %>%
+  filter((pval_Real < quantile(pval_Real,0.1)))
+
+compare.results.filt.long <- compare.results.filt %>%
+  pivot_longer(c(pval_Real,pval_Sim),names_to="Data",values_to="pval")
+
+
+
+p1 <- ggplot(compare.results.filt.long,aes(x=condition_group,y=pval,color=Data)) +
+  geom_boxplot() +
+  scale_y_log10() +
+  theme_cowplot() +
+  ggtitle("Lowest 10% of p-values on real")
+  
+p1
+
+compare.results.filt <- compare.results %>%
+  group_by(condition_group) %>%
+  filter((pval_Sim < quantile(pval_Sim,0.1)))
+
+compare.results.filt.long <- compare.results.filt %>%
+  pivot_longer(c(pval_Real,pval_Sim),names_to="Data",values_to="pval")
+
+
+p2 <- ggplot(compare.results.filt.long,aes(x=condition_group,y=pval,color=Data)) +
+  geom_boxplot() +
+  scale_y_log10() +
+  theme_cowplot() +
+  ggtitle("Lowest 10% of p-values on simulated")
+  
+p2
+
+total <- (pval.cdf | p1 | p2) + plot_annotation(tag_levels = "A") + plot_layout(guides = "collect")
+total
+
+
+ggsave2("Figures/Rebuttal/real_vs_sim_pval_10_kernel_width_updated_code.pdf",total)
+```
+
+
+### Allowing for variation in codon usage based on secondary structure
+
+```{r fig.width=7}
+
+real <- read_csv("Rosenberg_analysis/dataverse_files_remove_possible_exogenous/01_results_updated_code/00_pointwise_cdist-real-genes-kernel-size-10-bootstrap-1-perm-5000-w-any/pvals/cc-pvals.csv",col_types = cols())
+sim.roc <- read_csv("Rosenberg_analysis/dataverse_files_sim_w_ena_remove_possible_exogenous_different_cub_across_structures/01_results_updated_code/00_pointwise_cdist-simulated-genes-kernel-size-10-bootstrap-1-perm-5000-w-any/pvals/cc-pvals.csv",col_types = cols())
+
+
+compare.results <- real %>% 
+  left_join(sim.roc,by=c("condition_group","subgroup1","subgroup2"),suffix=c("_Real","_Sim"))
+
+compare.results.long <- compare.results %>%
+  pivot_longer(c(pval_Real,pval_Sim),names_to="Data",values_to="pval")
+
+
+pval.cdf <- ggplot(compare.results.long %>% filter(condition_group == "ANY"),aes(pval,color=Data)) + 
+  stat_ecdf() +
+  theme_cowplot() +
+  ggtitle("Cumulative distribution functions:\nReal vs. Simulated") +
+  geom_segment(x=0,y=0,xend=1,yend=1,color="black",linetype="dashed")
+pval.cdf
+
+compare.results.filt <- compare.results %>%
+  group_by(condition_group) %>%
+  filter((pval_Real < quantile(pval_Real,0.1)))
+
+compare.results.filt.long <- compare.results.filt %>%
+  pivot_longer(c(pval_Real,pval_Sim),names_to="Data",values_to="pval")
+
+
+
+p1 <- ggplot(compare.results.filt.long,aes(x=condition_group,y=pval,color=Data)) +
+  geom_boxplot() +
+  scale_y_log10() +
+  theme_cowplot() +
+  ggtitle("Lowest 10% of p-values on real")
+  
+p1
+
+compare.results.filt <- compare.results %>%
+  group_by(condition_group) %>%
+  filter((pval_Sim < quantile(pval_Sim,0.1)))
+
+compare.results.filt.long <- compare.results.filt %>%
+  pivot_longer(c(pval_Real,pval_Sim),names_to="Data",values_to="pval")
+
+
+p2 <- ggplot(compare.results.filt.long,aes(x=condition_group,y=pval,color=Data)) +
+  geom_boxplot() +
+  scale_y_log10() +
+  theme_cowplot() +
+  ggtitle("Lowest 10% of p-values on simulated")
+  
+p2
+
+total <- (pval.cdf | p1 | p2) + plot_annotation(tag_levels = "A") + plot_layout(guides = "collect")
+
+ggsave2("Figures/Rebuttal/real_vs_sim_codon_usage_diff_secondary_structure_pval_10_kernel_width_updated_code.pdf",total)
+
+
+```
+
+
+
+
+
+
+
+
+### Variability across runs when using real protein-coding sequences
+
+```{r fig.width=7}
+
+real.1 <- read_csv("Rosenberg_analysis/dataverse_files/01_results_updated_code/00_pointwise_cdist-real-genes-kernel-size-10-bootstrap-1-perm-5000-w-any-run-1/pvals/cc-pvals.csv",col_types = cols())
+real.2 <- read_csv("Rosenberg_analysis/dataverse_files/01_results_updated_code/01_pointwise_cdist-real-genes-kernel-size-10-bootstrap-1-perm-5000-w-any-run-2/pvals/cc-pvals.csv",col_types = cols())
+real.3 <- read_csv("Rosenberg_analysis/dataverse_files/01_results_updated_code/02_pointwise_cdist-real-genes-kernel-size-10-bootstrap-1-perm-5000-w-any-run-3/pvals/cc-pvals.csv",col_types = cols())
+
+
+compare.results <- real.1 %>% 
+  left_join(real.2,by=c("condition_group","subgroup1","subgroup2"),suffix=c("_1","_2"))
+compare.results <- compare.results  %>% 
+  left_join(real.3,by=c("condition_group","subgroup1","subgroup2")) %>%
+  dplyr::rename(pval_3 = pval)
+
+compare.results.filt <- compare.results %>%
+  group_by(condition_group) %>%
+  filter((pval_1 < quantile(pval_1,0.1)))
+
+compare.results.long <- compare.results.filt %>%
+  pivot_longer(c(pval_1,pval_2,pval_3),names_to="Data",values_to="pval")
+
+
+
+p1 <- ggplot(compare.results.long,aes(x=condition_group,y=pval,color=Data)) +
+  geom_boxplot() +
+  scale_y_log10() +
+  theme_cowplot() +
+  theme(aspect.ratio=1) + 
+  ggtitle("Lowest 10% of p-values on run 1")
+  
+p1
+
+
+ggsave2("Figures/Rebuttal/comparing_result_across_runs_real_data_updated_code.pdf",p1)
+
+
+```
 
 
 
